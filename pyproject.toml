@@ -6,7 +6,7 @@ version = "0.2.3"
 description = "Hermes Agent plugin: web_extract fallback chain TinyFish -> Firecrawl -> Keenable"
 requires-python = ">=3.11"
 license = "MIT"
-authors = [{ name = "Pressimize" }]
+authors = [{ name = "Pressimize" }, { name = "Claude (Anthropic)" }]
 # Ships with Hermes (core dependency); pinned to the version of Hermes v0.21.6.
 dependencies = ["httpx==0.28.1"]
 

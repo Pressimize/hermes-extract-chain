@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Metadata: Claude is named as an author next to Pressimize (README, `plugin.yaml`, `pyproject.toml`). No change to the code.
+
 ## 0.2.3 – 2026-10-10
 
 Hardening from a fourth and a fifth external code review.

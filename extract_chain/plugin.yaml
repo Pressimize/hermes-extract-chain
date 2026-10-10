@@ -1,7 +1,7 @@
 name: extract-chain
 version: 0.2.3
 description: "web_extract fallback chain: TinyFish (live) -> Firecrawl (live) -> Keenable (index copy), with notes for the model"
-author: Pressimize
+author: "Pressimize and Claude (Anthropic)"
 license: MIT
 homepage: "https://github.com/Pressimize/hermes-extract-chain"
 kind: backend

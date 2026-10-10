@@ -188,6 +188,11 @@ uv run pytest
 
 `pyproject.toml` only configures the tooling. It sits at the repository root on purpose: Hermes treats a plugin directory that contains a `pyproject.toml` as a package-manager member.
 
+## Authors
+
+- [Pressimize](https://github.com/Pressimize): idea, requirements and decisions.
+- Claude, Anthropic's AI model, working in Claude Code: design, code, tests, evaluation and documentation.
+
 ## License
 
 [MIT](LICENSE)
