@@ -50,7 +50,7 @@ Example of what the model sees:
 - Hermes Agent ≥ 0.21. Tested live with Hermes Desktop 0.21.6 on Windows; the plugin and extract code paths were checked against the v0.21.6 release that the Docker image is built from.
 - API keys for three page-fetch services:
   - [TinyFish](https://tinyfish.ai): fetch API returning a page's main content as Markdown; required; free tier 1,000 URLs/day.
-  - [Firecrawl](https://firecrawl.dev): scraping API with a browser and proxies, returns the whole page; free tier 1,000 credits/month.
+  - [Firecrawl](https://firecrawl.dev): scraping API with a browser and proxies, returns the article with much of the page around it; free tier 1,000 credits/month.
   - [Keenable](https://keenable.ai): search index that serves stored copies of pages; free tier 100,000 requests/month.
 
   Without a Firecrawl or Keenable key, that stage is skipped.
@@ -155,7 +155,7 @@ grep -o "firecrawl=[a-z_0-9]*" logs/agent.log | sort | uniq -c
 Not at the moment. Each stage plays a role the rules depend on:
 
 - **TinyFish** is the cheap first stage. It batches URLs, returns the main content, and its error codes decide whether a fallback can help.
-- **Firecrawl** is the live fallback for bot-protected pages. It returns whole pages, so the paywall check skips their last quarter, where footers and subscription dialogs sit.
+- **Firecrawl** is the live fallback for bot-protected pages. Even when asked for the main content only, it returns much of the page around the article, so the paywall check skips the last quarter, where footers and subscription dialogs sit.
 - **Keenable** serves index copies, which get past consent walls. That is why a consent wall skips Firecrawl, and why Keenable results carry the "may be older" note.
 
 Making providers configurable would need an adapter per provider declaring its role: live or index copy, main content or whole page, batch size and final error codes. It would also need an ordered list in the config, and the rules re-validated for each new provider. Why these three were chosen, with the test data: [docs/evaluation.md](docs/evaluation.md).

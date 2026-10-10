@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2 – 2026-10-10
+
+Two fixes from a third external code review.
+
+- Two URLs of one call that differ only in the trailing `/` each get the TinyFish result that names them. Before, both got the text of one of them.
+- A website-policy block whose result has an unexpected shape still blocks, with a generic message. Before, `extract()` raised.
+- Documentation: Firecrawl is asked for the main content only, yet returns much of the page around the article; the design now says so where it speaks of whole pages.
+
 ## 0.2.1 – 2026-10-10
 
 A pause after a used-up quota, and hardening after two external code reviews. The classification is unchanged.

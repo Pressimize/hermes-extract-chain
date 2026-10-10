@@ -69,13 +69,14 @@ def _blocked(url: str, entry_url: str | None = None) -> dict | None:
         return None
     if not blocked:
         return None
+    info = blocked if isinstance(blocked, dict) else {}  # S6: a block of unexpected shape still blocks
     entry_url = entry_url or url
     return {
         "url": entry_url,
         "title": "",
         "content": "",
-        "error": blocked["message"],
-        "blocked_by_policy": {k: blocked[k] for k in ("host", "rule", "source")},
+        "error": str(info.get("message") or "Blocked by website policy"),
+        "blocked_by_policy": {k: info.get(k, "") for k in ("host", "rule", "source")},
         "metadata": {"sourceURL": entry_url},
     }
 

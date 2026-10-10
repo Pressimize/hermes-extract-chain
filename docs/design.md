@@ -46,7 +46,7 @@ This plugin registers its own extract provider that chains three services per UR
   - `raw_content` is deliberately absent: Hermes uses `raw_content or content`, and the notes are in `content`.
 - **S6** Problems with single URLs or providers never raise; they become the entry's `error`. An unexpected exception while handling one URL fails only that URL (`extract-chain: <exception class>`, with a warning in the log); the other URLs of the call keep their results.
 - **S7** Website policy: Hermes applies its website blocklist inside each provider, not centrally (`tools.website_policy.check_website_access`). The plugin therefore:
-  - checks every input URL before any request; a blocked URL gets Hermes' error entry (`error`, `blocked_by_policy`) and is sent to no provider;
+  - checks every input URL before any request; a blocked URL gets Hermes' error entry (`error`, `blocked_by_policy`) and is sent to no provider. A block result of an unexpected shape still blocks, with a generic message;
   - checks the final URL reported by TinyFish, Firecrawl or Keenable after the chain; a redirect to a blocked site replaces the result with the blocked entry;
   - allows a URL whose check raises (e.g. a malformed final URL) and logs a warning, as Hermes does for errors in the policy itself;
   - fetches nothing if the policy module cannot be imported (an incompatible Hermes version): every URL of every call gets an error that names the cause, and each call logs a warning. The error starts with `Blocked by website policy`; Hermes' keyless rescue leaves such entries alone, so it cannot fetch the URLs without the blocklist either (D15);
@@ -55,7 +55,7 @@ This plugin registers its own extract provider that chains three services per UR
 
 ## 5. Chain (per URL)
 
-- **K1** Stage 1, TinyFish. All URLs of a call go out as batch requests of at most 10 URLs (TinyFish's limit; Hermes passes at most 5). Without `TINYFISH_API_KEY`, stage 1 fails for all URLs with `TinyFish: no API key`. Hermes offers `web_extract` at all only while some web backend reports itself available; if it does, it calls `extract` even then, because it does not check `is_available()` for an explicitly configured extract backend (see troubleshooting.md, *Missing TinyFish key*).
+- **K1** Stage 1, TinyFish. All URLs of a call go out as batch requests of at most 10 URLs (TinyFish's limit; Hermes passes at most 5). Stage 2 starts for a URL only when its batch has answered, so one slow URL can hold back the others by up to TinyFish's deadline (A0); Z1 includes that. Without `TINYFISH_API_KEY`, stage 1 fails for all URLs with `TinyFish: no API key`. Hermes offers `web_extract` at all only while some web backend reports itself available; if it does, it calls `extract` even then, because it does not check `is_available()` for an explicitly configured extract backend (see troubleshooting.md, *Missing TinyFish key*).
 - **K2** Depending on the class (section 6) of TinyFish's result:
   - `ok`: done, no note.
   - `paywall`: done, with the paywall note (V3).
@@ -106,6 +106,7 @@ Rules:
   - The prototype also checked the last 2,000 characters. On whole pages (Firecrawl) that caused false alarms from consent texts in the footer (Welt, n-tv).
 - **E4** `paywall`: one definite paywall marker, or at least 2 different general paywall markers, occur in the check area.
   - **Check area:** for TinyFish and Keenable, which return the main content, the whole text. For Firecrawl, which returns the whole page, the whole text below 4,000 characters, otherwise the first 75 %.
+  - **Whole page:** Firecrawl is asked for the main content only (`onlyMainContent: true`, A2). On the tested news sites its Markdown still carries navigation, teasers of other articles, the footer and subscription boxes, so these rules treat it as a whole page. The false notes on stern.de were seen with exactly this request body.
   - **Why:** whole pages end with footer and subscription dialogs. On stern.de, "Artikel freischalten", "PUR-Abo abschließen" and "STERN PLUS-Inhalte" sit at 81–95 % of the page; Spiegel and Welt are similar. Since TinyFish is always blocked on stern.de, every stern article would otherwise get a false paywall note.
   - Real paywall notices sit right after the teaser (Firecrawl in the chain test: at 13–45 % of the page). For main-content providers the notice is at the very end (Exa on heise+: 96 %), so the cut applies to Firecrawl only (D12).
 - **E5** `ok`: otherwise.
@@ -126,7 +127,7 @@ Rules:
 - **A0** Every request has a hard total deadline via `asyncio.timeout(...)`; the httpx timeout alone only bounds single phases. Deadlines: TinyFish 40 s, Firecrawl 40 s, Keenable 25 s.
 - **A1** TinyFish:
   - `POST https://api.fetch.tinyfish.ai`, headers `X-API-Key` and `Accept: application/json`; body `{"urls": [...], "format": "markdown", "per_url_timeout_ms": 30000, "ttl": 3600}`; at most 10 URLs per request, more are split and sent concurrently. TinyFish processes the URLs of a request in parallel (its documentation: request latency ≈ the slowest URL), so the deadline (A0) covers a whole batch.
-  - `results[]` and `errors[]` are matched to the input by `url`, tolerating a trailing `/`. The final URL is `final_url`, else the `url` of the entry.
+  - `results[]` and `errors[]` are matched to the input by `url`: the exact URL first, otherwise ignoring a trailing `/`. Two input URLs that differ only in the trailing `/` each get the entry that names them exactly; if the reply names only one of them, both get that entry. Where the reply lists a URL twice, the later entry counts (`errors[]` after `results[]`). The final URL is `final_url`, else the `url` of the entry.
   - `errors[].error` is the error code. The error text keeps TinyFish's wording (A4); the code is that text reduced to lowercase letters, digits and `_`, cut to 40 characters. This code appears in the log line (L1) and is what K2 compares with the final codes.
   - If a single-URL request gets exactly one entry with a different URL (e.g. after a redirect), that entry counts for the URL.
   - A URL in neither list gets `TinyFish: no result`. A non-2xx reply or a transport error fails all URLs of the request: `TinyFish: HTTP <status>` or `TinyFish: <exception class>`.

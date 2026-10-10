@@ -96,22 +96,29 @@ async def tinyfish(client: httpx.AsyncClient, urls: list[str], key: str) -> dict
             failed = _error("TinyFish", f"HTTP {status}", f"http_{status}", status=status)
             return {url: dict(failed) for url in urls}
         data = response.json()
-        found = {}
+        exact: dict[str, dict] = {}  # by the URL as the reply names it
+        found: dict[str, dict] = {}  # by that URL without a trailing "/", for inputs the reply names differently
+
+        def put(name: object, doc: dict) -> None:
+            exact[str(name or "")] = found[_key(name)] = doc
+
         for item in data.get("results") or []:
-            found[_key(item.get("url"))] = {
+            doc = {
                 "title": str(item.get("title") or ""),
                 "content": str(item.get("text") or ""),
                 "final_url": item.get("final_url") or item.get("url"),  # S7: keep the URL the reply names
             }
+            put(item.get("url"), doc)
         for item in data.get("errors") or []:
             text = _redact(item.get("error") or "fetch failed", key)
-            found[_key(item.get("url"))] = _error("TinyFish", text, _NOT_CODE.sub("_", text.lower())[:CODE_MAX])
+            put(item.get("url"), _error("TinyFish", text, _NOT_CODE.sub("_", text.lower())[:CODE_MAX]))
         if len(urls) == 1 and len(found) == 1 and _key(urls[0]) not in found:
             found = {_key(urls[0]): next(iter(found.values()))}  # reply names another URL (e.g. after a redirect)
     except Exception as exc:  # transport errors, deadline, malformed reply
         failed = _error("TinyFish", _describe(exc), _describe(exc))
         return {url: dict(failed) for url in urls}
-    return {url: found.get(_key(url)) or _error("TinyFish", "no result", "no_result") for url in urls}
+    missing = _error("TinyFish", "no result", "no_result")
+    return {url: exact.get(url) or found.get(_key(url)) or dict(missing) for url in urls}
 
 
 async def firecrawl(client: httpx.AsyncClient, url: str, key: str) -> dict:

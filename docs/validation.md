@@ -7,6 +7,7 @@ Versions:
 - **v0.1.0:** T2 and T3 ran against this version, on 2026-10-09.
 - **v0.2.0:** It added the website-policy and interrupt handling (S7, S8), the Firecrawl PDF cap (A2, V7), TinyFish batch splitting and the error codes in the log line (L1). The classification and the chain are unchanged. v0.2.0 was checked with the unit tests, the replay and a live smoke test (section *Edge-case review*).
 - **v0.2.1:** A stage is paused after HTTP 402 (K7); this was checked with unit tests and a test clock only, because no real 402 was available. Without Hermes' blocklist module every URL is refused (S7). Hardening after two external code reviews: an unexpected error stays with its URL (S6), duplicates get entries of their own (S5), TinyFish's error code is made safe for the log line, and a TinyFish entry without `final_url` counts with the URL it names (A1), and two markers listed twice were removed (E6). The classification and the chain are unchanged. v0.2.1 was checked with the unit tests and the replay, whose output is identical to v0.2.0; no new live check.
+- **v0.2.2:** Two fixes from a third external code review: URLs that differ only in the trailing `/` get the TinyFish result that names them (A1), and a policy block of unexpected shape still blocks instead of raising (S6, S7). Both faults were reproduced before the fix and are covered by unit tests now; the replay output is identical to v0.2.0.
 
 ## T1 – Unit tests
 
@@ -196,7 +197,7 @@ An independent review checked code, tests and this file against every requiremen
 Left open on purpose:
 
 - A non-dict item in TinyFish's `results` fails the whole batch (it then goes to Firecrawl); harmless.
-- Duplicates share one `metadata` object; Hermes drops `metadata` anyway.
+- Duplicates share one `metadata` object; Hermes drops `metadata` anyway. (Closed in v0.2.1: every duplicate is an entry of its own.)
 - No concurrency limit for Firecrawl (K6).
 
 ## Edge-case review (v0.2.0, 2026-10-10)

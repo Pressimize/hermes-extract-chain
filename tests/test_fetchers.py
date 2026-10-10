@@ -103,14 +103,41 @@ def test_tinyfish_transport_error():
     assert out == {"u": {"error": "TinyFish: ConnectError", "code": "ConnectError"}}
 
 
-def test_deadline(monkeypatch):
-    monkeypatch.setattr(fetchers, "KEENABLE_DEADLINE", 0.05)
+def test_tinyfish_urls_differing_only_in_the_trailing_slash_keep_their_own_result():
+    def handler(request):
+        urls = json.loads(request.content)["urls"]
+        return httpx.Response(200, json={"results": [{"url": u, "text": "text for " + u} for u in urls]})
+
+    urls = ["https://a.example/x", "https://a.example/x/"]
+    out = call(fetchers.tinyfish, handler, urls, "k")
+    assert [out[u]["content"] for u in urls] == ["text for " + u for u in urls]
+
+    only_one = {"results": [{"url": urls[1], "text": "T"}]}  # then that entry counts for both
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=only_one), urls, "k")
+    assert [out[u]["content"] for u in urls] == ["T", "T"]
+
+    twice = {"results": [{"url": urls[1], "text": "T"}], "errors": [{"url": urls[1], "error": "bot_blocked"}]}
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=twice), urls, "tf-key")
+    assert [out[u].get("code") for u in urls] == ["bot_blocked", "bot_blocked"]  # the later entry counts
+
+
+@pytest.mark.parametrize(
+    ("fetch", "provider", "target"),
+    [
+        (fetchers.tinyfish, "TinyFish", ["u"]),
+        (fetchers.firecrawl, "Firecrawl", "u"),
+        (fetchers.keenable, "Keenable", "u"),
+    ],
+)
+def test_deadline(monkeypatch, fetch, provider, target):  # A0: every request, whatever httpx does
+    monkeypatch.setattr(fetchers, f"{provider.upper()}_DEADLINE", 0.05)
 
     async def handler(request):
         await asyncio.sleep(1)
         return httpx.Response(200, json={})
 
-    assert call(fetchers.keenable, handler, "u", "k") == {"error": "Keenable: timeout", "code": "timeout"}
+    out = call(fetch, handler, target, "k")
+    assert (out["u"] if fetch is fetchers.tinyfish else out) == {"error": f"{provider}: timeout", "code": "timeout"}
 
 
 # --- A2 Firecrawl ----------------------------------------------------------------------------------

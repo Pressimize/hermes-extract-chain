@@ -173,6 +173,16 @@ def test_policy_blocks_before_any_request(env, monkeypatch):
     assert json.loads(api.requests[0].content)["urls"] == ["https://a.example/"]
 
 
+@pytest.mark.parametrize("reply", [{"message": "blocked"}, {"host": "a.example"}, "blocked"])
+def test_policy_block_of_unexpected_shape_still_blocks(env, monkeypatch, reply):
+    monkeypatch.setattr(provider, "check_website_access", lambda url: reply)  # e.g. a later Hermes version
+    api = Api(tinyfish=tinyfish_echo)
+    out = extract(api, ["https://a.example/"])
+    assert api.requests == [] and out[0]["content"] == ""
+    assert out[0]["error"] in ("blocked", "Blocked by website policy")
+    assert set(out[0]["blocked_by_policy"]) == {"host", "rule", "source"}
+
+
 def test_policy_checked_on_redirect_target(env, monkeypatch):
     monkeypatch.setattr(provider, "check_website_access", block_host("evil.example"))
 
