@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -40,9 +41,11 @@ _CODE = re.compile(r"[a-z0-9_]{1,40}")  # A1: what counts as an error code of Ti
 
 
 def _redact(detail: object, key: str) -> str:
-    """One line (V1), and a reply that echoes the key must not carry it into the result or the log (S3)."""
-    text = " ".join(str(detail).split())
-    return text.replace(key, "[key]") if key else text
+    """A reply that echoes the key must not carry it into the result or the log (S3); one line (V1)."""
+    text = str(detail)
+    for form in {key, quote(key, safe="")} if key else ():  # as sent and percent-encoded, in any case
+        text = re.sub(re.escape(form), "[key]", text, flags=re.IGNORECASE)
+    return " ".join(text.split())
 
 
 def _error(provider: str, detail: object, code: str, key: str = "", status: int | None = None) -> dict:
@@ -70,8 +73,15 @@ async def _request(client: httpx.AsyncClient, deadline: float, method: str, url:
         return await client.request(method, url, timeout=deadline, **kw)
 
 
-def _key(url: object) -> str:
+def _slashless(url: object) -> str:
+    """A URL without trailing "/": how a reply entry is matched to an input URL it names differently."""
     return str(url or "").rstrip("/")
+
+
+def _objects(data: dict, name: str) -> list[dict]:
+    """The entries of a list in a reply that are objects; anything else cannot be matched to a URL."""
+    value = data.get(name)
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 async def tinyfish(client: httpx.AsyncClient, urls: list[str], key: str) -> dict[str, dict]:
@@ -94,32 +104,35 @@ async def tinyfish(client: httpx.AsyncClient, urls: list[str], key: str) -> dict
             status = response.status_code
             failed = _error("TinyFish", f"HTTP {status}", f"http_{status}", status=status)
             return {url: dict(failed) for url in urls}
-        data = response.json()
+        data = _json(response)
+        if not data:
+            failed = _error("TinyFish", "malformed reply", "malformed")
+            return {url: dict(failed) for url in urls}
         exact: dict[str, dict] = {}  # by the URL as the reply names it
         found: dict[str, dict] = {}  # by that URL without a trailing "/", for inputs the reply names differently
 
         def put(name: object, doc: dict) -> None:
-            exact[str(name or "")] = found[_key(name)] = doc
+            exact[str(name or "")] = found[_slashless(name)] = doc
 
-        for item in data.get("results") or []:
+        for item in _objects(data, "results"):
             doc = {
                 "title": str(item.get("title") or ""),
                 "content": str(item.get("text") or ""),
                 "final_url": item.get("final_url") or item.get("url"),  # S7: keep the URL the reply names
             }
             put(item.get("url"), doc)
-        for item in data.get("errors") or []:
+        for item in _objects(data, "errors"):
             text = _redact(item.get("error") or "fetch failed", key)
             # L1: only a code reaches the log; any other text may quote the URL or the page
             code = text.lower() if _CODE.fullmatch(text.lower()) else "fetch_failed"
             put(item.get("url"), _error("TinyFish", text, code))
-        if len(urls) == 1 and len(found) == 1 and _key(urls[0]) not in found:
-            found = {_key(urls[0]): next(iter(found.values()))}  # reply names another URL (e.g. after a redirect)
+        if len(urls) == 1 and len(found) == 1 and _slashless(urls[0]) not in found:
+            found = {_slashless(urls[0]): next(iter(found.values()))}  # reply names another URL (e.g. after a redirect)
     except Exception as exc:  # transport errors, deadline, malformed reply
         failed = _error("TinyFish", _describe(exc), _describe(exc))
         return {url: dict(failed) for url in urls}
     missing = _error("TinyFish", "no result", "no_result")
-    return {url: dict(exact.get(url) or found.get(_key(url)) or missing) for url in urls}  # one object per URL
+    return {url: dict(exact.get(url) or found.get(_slashless(url)) or missing) for url in urls}  # one object per URL
 
 
 async def firecrawl(client: httpx.AsyncClient, url: str, key: str) -> dict:
@@ -171,7 +184,9 @@ async def keenable(client: httpx.AsyncClient, url: str, key: str) -> dict:
             detail = body.get("message") or body.get("error") or response.text.strip()
             status = response.status_code
             return _error("Keenable", detail or f"HTTP {status}", f"http_{status}", key, status)
-        data = response.json()
+        data = _json(response)
+        if not data:
+            return _error("Keenable", "malformed reply", "malformed")
         return {
             "title": str(data.get("title") or ""),
             "content": str(data.get("content") or ""),

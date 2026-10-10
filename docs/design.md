@@ -82,7 +82,7 @@ This plugin registers its own extract provider that chains three services per UR
 
   - A paused stage counts as failed. Its reason repeats the reply that started the pause and adds the remaining time, e.g. `Firecrawl: API 402: Insufficient credits (paused for another 17 h)`; below one hour it is given in minutes. The chain continues as after any other error (K2–K4).
   - Only an HTTP 402 of the provider's own API starts a pause. A rate limit (429), an error for a single URL and the status of the target page do not.
-  - A pause belongs to the pair of provider and key, so profiles with different keys in one process do not pause each other, and a corrected key is used at once.
+  - A pause belongs to the pair of provider and key, so profiles with different keys in one process do not pause each other, and a corrected key is used at once. The pause table stores a digest of the key, not the key.
   - Pauses live in memory only. A new process starts without pauses, and a pause that is no longer justified (credits topped up) ends by itself or with a restart.
   - After the pause, the stage is asked again on the next call. Nothing needs to be reset when a quota renews.
   - A pause never has more than 24 hours left. If it has, the system clock was set back; the pause is dropped and the stage is asked again.
@@ -130,18 +130,18 @@ Rules:
   - `results[]` and `errors[]` are matched to the input by `url`: the exact URL first, otherwise ignoring a trailing `/`. Two input URLs that differ only in the trailing `/` each get the entry that names them exactly; if the reply names only one of them, both get that entry. Where the reply lists a URL twice, the later entry counts (`errors[]` after `results[]`). The final URL is `final_url`, else the `url` of the entry.
   - `errors[].error` is the error code. The error text keeps TinyFish's wording (A4). The code is that text in lowercase if it consists of at most 40 letters, digits and `_`; any other text gives the code `fetch_failed`, because it might quote the URL or the page and only a code may reach the log line (L1). K2 compares this code with the final codes.
   - If a single-URL request gets exactly one entry with a different URL (e.g. after a redirect), that entry counts for the URL.
-  - A URL in neither list gets `TinyFish: no result`. A non-2xx reply or a transport error fails all URLs of the request: `TinyFish: HTTP <status>` or `TinyFish: <exception class>`.
+  - A URL in neither list gets `TinyFish: no result`. An entry of `results[]` or `errors[]` that is no object is skipped, so only its URL is left without a result; a `results` or `errors` that is no list counts as empty. A non-2xx reply, a reply that is no JSON object or an empty one (`TinyFish: malformed reply`) or a transport error fails all URLs of the request: `TinyFish: HTTP <status>` or `TinyFish: <exception class>`.
 - **A2** Firecrawl:
   - `POST https://api.firecrawl.dev/v2/scrape` with `Authorization: Bearer <key>`; body `{"url", "formats": ["markdown"], "onlyMainContent": true, "maxAge": 3600000, "timeout": 30000, "parsers": [{"type": "pdf", "maxPages": 30}]}`.
-  - Success means `success: true` and `data.markdown`; the title comes from `data.metadata.title`, the final URL from `data.metadata.url`.
+  - Success means `success: true`; the text is `data.markdown` (a missing or empty one counts as an empty page, E2), the title comes from `data.metadata.title`, the final URL from `data.metadata.url`.
   - A target status (`data.metadata.statusCode`) outside 200–299 and not 304 becomes `target HTTP <status>`. Firecrawl otherwise returns such pages without an error field, and still bills them.
   - An API error becomes `API <status>: <error>`.
   - PDFs are capped at 30 pages, because Firecrawl bills one credit per PDF page. If `metadata.totalPages` exceeds `metadata.numPages`, the result gets note V7.
 - **A3** Keenable:
   - `GET https://api.keenable.ai/v1/fetch?url=...` with `Authorization: Bearer <key>` and `X-Keenable-Title: hermes-extract-chain`.
   - No `live` parameter: its price is undocumented, and the index copy is what solves consent walls.
-  - On non-2xx, the error is the JSON field `message` (else `error`), else the response text, else `HTTP <status>`, e.g. `{"error": "Unprocessable entity", "message": "The page is behind a login or paywall"}`.
-- **A4** Provider error texts are reduced to one line (runs of whitespace, line breaks included, become one space, so that a note stays one line, V1), cut to 200 characters and prefixed with the provider name. The remaining time of a pause (K7) is added after the cut. A key echoed in them is replaced by `[key]` (S3). Each error also carries a short code for the log (L1), and a failed reply of the provider's API carries its HTTP status, which K7 reads.
+  - A 2xx reply that is no JSON object, or an empty one, is `Keenable: malformed reply`. On non-2xx, the error is the JSON field `message` (else `error`), else the response text, else `HTTP <status>`, e.g. `{"error": "Unprocessable entity", "message": "The page is behind a login or paywall"}`.
+- **A4** Provider error texts are reduced to one line (runs of whitespace, line breaks included, become one space, so that a note stays one line, V1), cut to 200 characters and prefixed with the provider name. The remaining time of a pause (K7) is added after the cut. A key echoed in them is replaced by `[key]` (S3), as sent or percent-encoded and in any case. Each error also carries a short code for the log (L1), and a failed reply of the provider's API carries its HTTP status, which K7 reads.
 - **A5** One `httpx.AsyncClient` per `extract` call (`async with`), closed on cancellation too. It honours `HTTP(S)_PROXY`/`NO_PROXY`. It does not follow redirects, so a key never travels to another host; a redirect from a provider's API counts as an error (`http_3xx`, `api_3xx`). TLS uses Hermes' process-wide OS trust store, which Hermes installs at start-up.
 
 ## 9. Time budget
@@ -165,14 +165,15 @@ Rules:
 
 ## 11. Logging
 
-- **L1** Logger `logging.getLogger(__name__)`. For each URL, one INFO line: `extract-chain <host>: tinyfish=<outcome> [firecrawl=<outcome>] [keenable=<outcome>]`.
+- **L1** Logger `logging.getLogger(__name__)`. For each URL that reaches the chain, one INFO line: `extract-chain <host>: tinyfish=<outcome> [firecrawl=<outcome>] [keenable=<outcome>]`.
   - The outcome is the class from section 6, or for errors a short code:
     - TinyFish's own code (e.g. `bot_blocked`), or `fetch_failed` when TinyFish sent no code or a text instead of a code (A1);
     - `http_<status>` (API status of TinyFish/Keenable);
     - `api_<status>` (Firecrawl API);
     - `target_<status>` (target page via Firecrawl);
     - `timeout` or an exception class name;
-    - `no_key`, `no_result`, `paused` (K7), `interrupted`, `exception`.
+    - `no_key`, `no_result`, `malformed` (a reply that is no JSON object, or an empty one), `paused` (K7), `interrupted`, `exception`.
+  - A URL that ends before the chain has no such line: a policy block, the refusal without the policy module, an interrupt before the first request, an entry that is no string, a client that cannot be created. Its reason is the entry's `error`; the refusal, a failing policy check and the client failure also log a warning.
   - Each stage that ran is listed. No content, no keys, no full URL: without a host the line says `<no host>`, for an invalid URL `<invalid url>`.
   - Hermes writes INFO to `logs/agent.log` and WARNING to `logs/errors.log` in the Hermes home. Troubleshooting by log line: [troubleshooting.md](troubleshooting.md).
 - **L2** When a pause starts (K7), one WARNING line: `extract-chain: <Provider> paused for <seconds> s (<code>)`, e.g. `extract-chain: Firecrawl paused for 86400 s (api_402)`.
@@ -234,7 +235,7 @@ See also [troubleshooting.md](troubleshooting.md), section *Edge cases*.
 | D12 | Paywall check on Firecrawl pages without the last quarter (E4) | The live smoke test showed stern.de getting false paywall notes via Firecrawl. On the stored data of all six providers, this removes the three Firecrawl false alarms (Spiegel, Welt, stern) and keeps every paywall hit of TinyFish, Firecrawl and Keenable. |
 | D13 | Enforce Hermes' website policy and interrupts in the plugin (S7, S8); cap Firecrawl PDFs at 30 pages (A2) | Found in the edge-case review (2026-10-10): Hermes leaves the blocklist and interrupt checks to each provider, and an uncapped PDF can cost hundreds of Firecrawl credits in one call. |
 | D14 | Pause a stage after HTTP 402 (K7): 24 hours, TinyFish until 00:05 UTC | A used-up quota answers every request with 402 until it renews. TinyFish documents the renewal of its daily allowance at 00:00 UTC; pausing beyond it would spend Firecrawl credits on pages TinyFish fetches for free. |
-| D15 | Refuse every URL when Hermes' policy module cannot be imported (S7) | A blocklist that silently stops working is the worse failure; a refusal shows in the first call. Up to v0.2.0 the plugin went on without the blocklist and logged one warning. |
+| D15 | Refuse every URL when Hermes' policy module cannot be imported (S7) | A blocklist that silently stops working is the worse failure; a refusal shows in the first call. Up to v0.2.0 the plugin went on without the blocklist and logged one warning. `is_available()` stays true in that state: otherwise Hermes would stop offering the tool, and the model would see a missing tool instead of the reason. |
 | D16 | No concurrency limit of its own (K6) | Proposed in several reviews. A local limit puts waiting time in front of a stage's deadline (A0): with five URLs up to 185 s, beyond Hermes' `web.extract_timeout`, and Hermes then drops every result of the call. Hermes passes at most five URLs, and Firecrawl queues by itself. |
 | D17 | One client per call, not one kept across calls (A5) | Hermes runs tool calls on several event loops and, when called from inside a running loop, closes the loop after the call. A client kept across calls would be bound to a closed loop. The saving would be one TLS handshake per provider and call. |
 | D18 | No retry (K5) and no cap on the text that is classified (E3, E4) | The next stage is the retry; waiting for `Retry-After` does not fit into Z1. Classifying costs about 13 ms per 100,000 characters (measured), and main-content providers put the paywall notice at the very end, where a cap would lose it. |

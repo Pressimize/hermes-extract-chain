@@ -90,16 +90,26 @@ def test_tinyfish_splits_batches_of_ten():
         ),
         (
             lambda r: httpx.Response(200, json=["no", "dict"]),
-            {"error": "TinyFish: AttributeError", "code": "AttributeError"},
+            {"error": "TinyFish: malformed reply", "code": "malformed"},
         ),
         (
             lambda r: httpx.Response(200, text="<html>no JSON</html>"),
-            {"error": "TinyFish: JSONDecodeError", "code": "JSONDecodeError"},
+            {"error": "TinyFish: malformed reply", "code": "malformed"},
         ),
     ],
 )
 def test_tinyfish_batch_failures_apply_to_all(handler, expected):
     assert call(fetchers.tinyfish, handler, ["u1", "u2"], "k") == {"u1": expected, "u2": expected}
+
+
+def test_tinyfish_entry_that_is_no_object_fails_alone():
+    reply = {
+        "results": [{"url": "u1", "text": "T1"}, "broken", None],
+        "errors": [5, {"url": "u3", "error": "bot_blocked"}],
+    }
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), ["u1", "u2", "u3"], "tf-key")
+    assert out["u1"]["content"] == "T1"  # the other entries of the batch count
+    assert [out[u]["code"] for u in ("u2", "u3")] == ["no_result", "bot_blocked"]
 
 
 def test_tinyfish_transport_error():
@@ -229,7 +239,8 @@ def test_keenable_request_and_success():
         ),
         (httpx.Response(504, text="Gateway timeout"), ("Keenable: Gateway timeout", "http_504")),
         (httpx.Response(500), ("Keenable: HTTP 500", "http_500")),
-        (httpx.Response(200, text="<html>no JSON</html>"), ("Keenable: JSONDecodeError", "JSONDecodeError")),
+        (httpx.Response(200, text="<html>no JSON</html>"), ("Keenable: malformed reply", "malformed")),
+        (httpx.Response(200, json=["no", "dict"]), ("Keenable: malformed reply", "malformed")),
     ],
 )
 def test_keenable_errors(reply, expected):
@@ -241,6 +252,24 @@ def test_keenable_errors(reply, expected):
 def test_error_detail_truncated():
     out = call(fetchers.keenable, lambda r: httpx.Response(500, text="x" * 500), "u", "k")
     assert out["error"] == "Keenable: " + "x" * 200
+
+
+def test_key_is_redacted_in_any_case_and_percent_encoded():
+    def echo(request):
+        return httpx.Response(401, text="keys FC-SE/CRET+X and fc-SE%2FCRET%2Bx and fc-se%2fcret%2bx rejected")
+
+    out = call(fetchers.firecrawl, echo, "u", "fc-SE/CRET+x")
+    assert out["error"] == "Firecrawl: API 401: keys [key] and [key] and [key] rejected"
+    # TinyFish's code is lowercased: a key echoed in another case must not become the code (L1)
+    reply = {"errors": [{"url": "u", "error": "ABC123"}]}
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), ["u"], "abc123")["u"]
+    assert (out["error"], out["code"]) == ("TinyFish: [key]", "fetch_failed")
+
+
+def test_megabyte_error_page_gives_a_short_error():
+    page = "<p>error</p>  " * 400_000 + "ke-SECRET"  # megabytes, the key at the very end
+    out = call(fetchers.keenable, lambda r: httpx.Response(502, text=page), "u", "ke-SECRET")
+    assert out["error"] == ("Keenable: " + "<p>error</p> " * 20)[:210] and out["status"] == 502
 
 
 def test_key_echoed_by_provider_is_redacted():

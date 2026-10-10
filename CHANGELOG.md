@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.2.4 – 2026-10-10
 
-- Metadata: Claude is named as an author next to Pressimize (README, `plugin.yaml`, `pyproject.toml`). No change to the code.
+From a sixth and a seventh external code review.
+
+- A TinyFish reply entry that is no object is skipped, so only its URL is left without a result. Before, it failed every URL of the request, and each of them went on to Firecrawl.
+- A 2xx reply of TinyFish or Keenable that is no JSON object, or an empty one, gives the code `malformed` (`<Provider>: malformed reply`) instead of `AttributeError` or `JSONDecodeError`.
+- The pause table is keyed by a digest of the API key, so the plugin keeps no key of its own in memory.
+- A key echoed in an error text is replaced in any case and also in its percent-encoded form. A TinyFish error that repeats the key in another case can no longer become the code in the log.
+- Without Hermes' policy module, an entry of `urls` that is no string keeps the error `extract-chain: not a URL`.
+- The CI job times out after 10 minutes.
+- Design: the log line (L1) is written for every URL that reaches the chain; the text now says which URLs have none.
+- Metadata: Claude is named as an author next to Pressimize (README, `plugin.yaml`, `pyproject.toml`).
 
 ## 0.2.3 – 2026-10-10
 

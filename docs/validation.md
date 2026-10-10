@@ -8,7 +8,8 @@ Versions:
 - **v0.2.0:** It added the website-policy and interrupt handling (S7, S8), the Firecrawl PDF cap (A2, V7), TinyFish batch splitting and the error codes in the log line (L1). The classification and the chain are unchanged. v0.2.0 was checked with the unit tests, the replay and a live smoke test (section *Edge-case review*).
 - **v0.2.1:** A stage is paused after HTTP 402 (K7); this was checked with unit tests and a test clock only, because no real 402 was available. Without Hermes' blocklist module every URL is refused (S7). Hardening after two external code reviews: an unexpected error stays with its URL (S6), duplicates get entries of their own (S5), TinyFish's error code is made safe for the log line, and a TinyFish entry without `final_url` counts with the URL it names (A1), and two markers listed twice were removed (E6). The classification is unchanged, and so is the chain apart from the pause. v0.2.1 was checked with the unit tests and the replay, whose output is identical to v0.2.0; no new live check.
 - **v0.2.2:** Two fixes from a third external code review: URLs that differ only in the trailing `/` get the TinyFish result that names them (A1), and a policy block of unexpected shape still blocks instead of raising (S6, S7). Both faults were reproduced before the fix and are covered by unit tests now; the replay output is identical to v0.2.0.
-- **v0.2.3:** Hardening from a fourth and a fifth external code review: a URL whose policy check raises is blocked (S7, D19), only a code of TinyFish reaches the log (A1, L1), an entry that is no string fails alone (S6), and redirects are explicitly not followed (A5). One marker rule changed (E6): `zustimmung` no longer counts inside `Cookie-Zustimmung`. On the 727 stored texts of the chain test, the live check and the search test this changes no classification, and the replay output is identical to v0.2.0.
+- **v0.2.3:** Hardening from a fourth and a fifth external code review: a URL whose policy check raises is blocked (S7, D19), only a code of TinyFish reaches the log (A1, L1), an entry that is no string fails alone (S6), and redirects are explicitly not followed (A5). One marker rule changed (E6): `zustimmung` no longer counts inside `Cookie-Zustimmung`. On the 727 stored texts of the chain test, the live check and the search test this changes no classification, and the replay output is identical to v0.2.0. Before the release, v0.2.0 and v0.2.3 were run side by side on the same simulated provider replies (fetchers, provider, chain) and the tests of v0.2.0 were run against v0.2.3; every difference is an entry of the changelog.
+- **v0.2.4:** From a sixth and a seventh external code review: a TinyFish reply entry that is no object is skipped instead of failing the whole request, a reply that is no JSON object gives `malformed` (A1, A3), the pause table holds a digest instead of the key (K7), and a key is redacted in any case and percent-encoded (A4). Checked with the unit tests, the replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
 
 ## T1 – Unit tests
 
@@ -197,7 +198,7 @@ An independent review checked code, tests and this file against every requiremen
 
 Left open on purpose:
 
-- A non-dict item in TinyFish's `results` fails the whole batch (it then goes to Firecrawl); harmless.
+- A non-dict item in TinyFish's `results` fails the whole batch (it then goes to Firecrawl); harmless. (Closed after v0.2.3: such an entry is skipped, and only its URL is left without a result.)
 - Duplicates share one `metadata` object; Hermes drops `metadata` anyway. (Closed in v0.2.1: every duplicate is an entry of its own.)
 - No concurrency limit for Firecrawl (K6).
 

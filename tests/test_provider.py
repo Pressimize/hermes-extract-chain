@@ -274,14 +274,19 @@ def test_entries_that_are_no_strings_fail_alone(env):
     assert json.loads(api.requests[0].content)["urls"] == ["https://a.example/"]
 
 
-def test_redirect_of_a_provider_api_is_not_followed(env):
+@pytest.mark.parametrize("stage", ["tinyfish", "firecrawl", "keenable"])
+def test_redirect_of_a_provider_api_is_not_followed(env, stage):  # A5: all three send a key
     def moved(request):
         return httpx.Response(307, headers={"Location": "https://elsewhere.example/"})
 
-    api = Api(tinyfish=moved)
+    def down(request):
+        return httpx.Response(500, json={"success": False})
+
+    handlers = {"tinyfish": tinyfish_blocked, "firecrawl": down, "keenable": down, stage: moved}
+    api = Api(**handlers)
     out = extract(api, ["https://a.example/"])
-    assert api.hosts() == ["api.fetch.tinyfish.ai", "api.firecrawl.dev"]  # the key went to no other host (A5)
-    assert out[0]["content"].startswith(NOTE_FIRECRAWL.format(reason="TinyFish: HTTP 307"))
+    assert api.hosts() == ["api.fetch.tinyfish.ai", "api.firecrawl.dev", "api.keenable.ai"]  # and no other host
+    assert "307" in out[0]["error"]
 
 
 def test_missing_policy_module_refuses_every_url(env, monkeypatch, caplog):
@@ -293,6 +298,10 @@ def test_missing_policy_module_refuses_every_url(env, monkeypatch, caplog):
     # Hermes' keyless rescue must leave these entries alone; it recognises them by this phrase
     assert all("blocked by website policy" in r["error"].lower() and r["content"] == "" for r in out)
     assert "extract-chain: tools.website_policy not importable; every URL refused" in caplog.text
+    # an entry that is no string keeps its own error (S6), and the provider stays "available" so that
+    # Hermes goes on offering the tool and the model sees the reason instead of a missing tool (D15)
+    assert extract(api, [5])[0]["error"] == "extract-chain: not a URL"
+    assert ExtractChainProvider().is_available()
 
 
 def test_unexpected_failure_becomes_error_entries(env, monkeypatch):
@@ -383,6 +392,13 @@ def tinyfish_allowance_used(request):
     return httpx.Response(402, json={"error": {"code": "INSUFFICIENT_CREDITS"}})
 
 
+def test_pause_table_holds_no_key(env):
+    api = Api(tinyfish=tinyfish_blocked, firecrawl=out_of_credits, keenable=keenable_ok)
+    chain_provider = ExtractChainProvider(httpx.MockTransport(api), clock=Clock(NOON))
+    asyncio.run(chain_provider.extract([URL]))
+    assert chain_provider._paused and "SECRET" not in repr(chain_provider._paused)
+
+
 def test_tinyfish_pause_ends_shortly_after_midnight_utc(env, caplog):
     clock = Clock(NOON + 11 * 3600)  # 23:00 UTC
     call = calls(Api(tinyfish=tinyfish_allowance_used), clock)
@@ -448,10 +464,12 @@ TARGET_402 = {"success": True, "data": {"markdown": "", "metadata": {"statusCode
 )
 def test_only_a_402_of_the_api_pauses(env, firecrawl):
     call = calls(Api(tinyfish=tinyfish_blocked, firecrawl=firecrawl, keenable=keenable_ok), Clock(NOON))
-    assert call()[1] == call()[1] == ["tinyfish", "firecrawl", "keenable"]
+    asked = [call()[1], call()[1]]  # two calls: the second would skip a paused stage
+    assert asked == [["tinyfish", "firecrawl", "keenable"]] * 2
 
 
 def test_tinyfish_error_for_one_url_does_not_pause(env):
     reply = {"errors": [{"url": URL, "error": "http_402"}]}
     call = calls(Api(tinyfish=lambda r: httpx.Response(200, json=reply)), Clock(NOON))
-    assert call()[1] == call()[1] == ["tinyfish", "firecrawl"]
+    asked = [call()[1], call()[1]]  # two calls: the second would skip a paused stage
+    assert asked == [["tinyfish", "firecrawl"]] * 2

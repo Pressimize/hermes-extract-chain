@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import logging
 import math
 import time
@@ -34,6 +35,7 @@ NO_POLICY = (
     "Blocked by website policy: extract-chain cannot load Hermes' website blocklist and fetches nothing without it "
     "(the plugin does not match this Hermes version). Update the plugin or set web.extract_backend to another provider."
 )
+NOT_A_URL = "extract-chain: not a URL"  # S6: an entry of urls that is no string
 # S8: same convention as Hermes' built-in providers for /stop and new user messages.
 try:
     from tools.interrupt import is_interrupted
@@ -53,6 +55,11 @@ def _env(name: str) -> str:
 def _pause_seconds(provider: str, now: float) -> float:
     """K7: 24 h; TinyFish only until 00:05 UTC, just after its daily allowance renews."""
     return DAY - (now - TINYFISH_RESET_GRACE) % DAY if provider == "TinyFish" else DAY
+
+
+def _slot(provider: str, key: str) -> tuple[str, str]:
+    """K7: the pause table is keyed by a digest of the API key, so it holds no key."""
+    return provider, hashlib.sha256(key.encode("utf-8", "replace")).hexdigest()
 
 
 def _left(seconds: float) -> str:
@@ -87,7 +94,7 @@ class ExtractChainProvider(WebSearchProvider):
     ) -> None:
         self._transport = transport  # tests only; Hermes instantiates without arguments
         self._clock = clock  # wall clock, because TinyFish's pause ends at 00:05 UTC
-        self._paused: dict[tuple[str, str], tuple[float, str]] = {}  # K7: (provider, key) -> (until, reason)
+        self._paused: dict[tuple[str, str], tuple[float, str]] = {}  # K7: _slot(provider, key) -> (until, reason)
 
     @property
     def name(self) -> str:
@@ -110,7 +117,7 @@ class ExtractChainProvider(WebSearchProvider):
         """One entry per input URL, in input order (S5). kwargs such as ``format`` are ignored (S4)."""
         if check_website_access is None:  # S7: never fetch without the blocklist
             log.warning("extract-chain: tools.website_policy not importable; every URL refused")
-            return [failure(url, NO_POLICY) for url in urls]
+            return [failure(u, NO_POLICY if isinstance(u, str) else NOT_A_URL) for u in urls]
         unique = list(dict.fromkeys(url for url in urls if isinstance(url, str)))
         done = {url: entry for url in unique if (entry := _blocked(url))}
         todo = [url for url in unique if url not in done]
@@ -123,7 +130,7 @@ class ExtractChainProvider(WebSearchProvider):
                 log.warning("extract-chain: call failed: %s", type(exc).__name__)
                 done.update({url: failure(url, f"extract-chain: {type(exc).__name__}") for url in todo})
         # duplicates get entries of their own (S5); an entry that is no string fails alone (S6)
-        return [copy.deepcopy(done[u]) if isinstance(u, str) else failure(u, "extract-chain: not a URL") for u in urls]
+        return [copy.deepcopy(done[u]) if isinstance(u, str) else failure(u, NOT_A_URL) for u in urls]
 
     async def _chain(self, urls: list[str]) -> dict[str, dict]:
         tf_key, fc_key, ke_key = (_env(k) for k in KEYS)
@@ -150,8 +157,10 @@ class ExtractChainProvider(WebSearchProvider):
             )
         results = {}
         for url, result in zip(urls, done, strict=True):
-            final = result["metadata"].get("finalURL")  # S7: a redirect may end on a blocked site
-            results[url] = (final and final != url and _blocked(final, entry_url=url)) or result
+            final = result["metadata"].get("finalURL")
+            # S7: a redirect may end on a blocked site; the block entry then replaces the result
+            blocked = _blocked(final, entry_url=url) if final and final != url else None
+            results[url] = blocked or result
         return results
 
     def _stage(self, provider: str, fetch: Fetch, key: str) -> Fetch | None:
@@ -168,7 +177,7 @@ class ExtractChainProvider(WebSearchProvider):
 
     def _paused_doc(self, provider: str, key: str) -> dict | None:
         """K7: the error of a stage that is skipped after a used-up quota, or None."""
-        until, reason = self._paused.get((provider, key), (0.0, ""))
+        until, reason = self._paused.get(_slot(provider, key), (0.0, ""))
         left = until - self._clock()
         if not 0 < left <= DAY:  # more than a day left: the clock was set back, so the pause is dropped
             return None
@@ -179,6 +188,6 @@ class ExtractChainProvider(WebSearchProvider):
         if doc.get("status") == PAUSE_STATUS and not self._paused_doc(provider, key):
             now = self._clock()
             seconds = _pause_seconds(provider, now)
-            self._paused[(provider, key)] = (now + seconds, doc["error"])
+            self._paused[_slot(provider, key)] = (now + seconds, doc["error"])
             log.warning("extract-chain: %s paused for %d s (%s)", provider, math.ceil(seconds), doc["code"])  # L2
         return doc

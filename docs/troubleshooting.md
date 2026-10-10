@@ -51,6 +51,7 @@ Each stage that ran appears as `<stage>=<outcome>`. Success outcomes are the cla
 | `timeout` | any | The plugin's own deadline (40/40/25 s), an httpx timeout or the provider's timeout | yes |
 | `ConnectError`, `ProxyError`, … | any | Network: DNS, firewall, proxy refused the connection, TLS | yes |
 | `fetch_failed` | TinyFish | TinyFish named no code for the URL, or sent a text instead of a code; the text is in the error the model sees | yes → Firecrawl |
+| `malformed` | TinyFish, Keenable | The provider's API answered 2xx with something that is no JSON object, or with an empty one (for TinyFish this fails all URLs of the request) | yes, to the next stage |
 | `no_result` | TinyFish | TinyFish's reply did not mention the URL (see *Edge cases*, redirects) | yes → Firecrawl |
 | `no_key` | any | Key not set in the profile | stage skipped |
 | `paused` | any | The provider's API answered HTTP 402 earlier (quota or credits used up); no request is sent until the pause ends (K7) | stage skipped |
