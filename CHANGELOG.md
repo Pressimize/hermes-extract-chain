@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.3 – 2026-10-10
+
+Hardening from a fourth and a fifth external code review.
+
+- A URL whose website-policy check raises is blocked. Before, it was allowed. Hermes' own providers withhold such a result as well.
+- A TinyFish error that is not a plain code is logged as `fetch_failed`. Before, the first 40 characters of its text went to the log in reduced form, which could include part of a URL. A code in another case (`PAGE_NOT_FOUND`) counts as that code, also where the chain ends on it.
+- `zustimmung` no longer counts as a second wall marker inside `Cookie-Zustimmung`. No stored test text is classified differently.
+- An entry of `urls` that is not a string gets an error of its own. Before, it failed the other URLs of the call or made `extract()` raise. Hermes itself passes strings only.
+- The HTTP client is told explicitly not to follow redirects (it never did), so that a key cannot travel to another host.
+- Input URLs that share one TinyFish entry each get a copy of it.
+- Design: decisions D16–D18 record three proposals that reviews keep raising, and why they were not adopted.
+
 ## 0.2.2 – 2026-10-10
 
 Two fixes from a third external code review.

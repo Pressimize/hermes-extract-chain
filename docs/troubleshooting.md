@@ -27,6 +27,7 @@ grep -o "firecrawl=[a-z_0-9]*" logs/agent.log | sort | uniq -c
 | Whole call | Hermes' policy module cannot be imported (incompatible Hermes version) | `Blocked by website policy: extract-chain cannot load Hermes' website blocklist …` for every URL; nothing is fetched, and the keyless rescue does not step in | `errors.log`: `extract-chain: tools.website_policy not importable; every URL refused` |
 | Whole call | Bug in the plugin raises | `Error extracting content: …`. With `web.keyless_rescue` on, Hermes instead tries anonymous providers, and you see content without notes | traceback in `errors.log` |
 | One URL | Bug in the plugin raises while handling that URL | `error`: `extract-chain: <exception class>`; the other URLs of the call keep their results | `errors.log`: `extract-chain <host>: chain failed: <exception class>` |
+| One URL | Hermes' policy check raises for the URL or its final URL | `error`: `Blocked by website policy: the check failed for this URL (<exception class>)`; the content is withheld | `errors.log`: `extract-chain: website policy check failed for a URL (blocked): <exception class>` |
 | One URL | Policy block | `error` with Hermes' block message plus a `blocked_by_policy` field | none; Hermes' policy logs |
 | One URL | All stages failed | `error` listing every stage's reason | the L1 line shows each stage's code |
 | One URL | A later stage delivered | content with a note naming the source and why the earlier stages failed | the L1 line |
@@ -49,6 +50,7 @@ Each stage that ran appears as `<stage>=<outcome>`. Success outcomes are the cla
 | `http_4xx` / `http_5xx` with a message | Keenable | Keenable could not provide the page; the error text carries its message, e.g. *The page is behind a login or paywall* (`Unprocessable entity`), *The page was reached but content could not be extracted*, *The target page took too long to respond* (`Gateway timeout`), *The target server denied access to this URL* (`Upstream forbidden`) | last stage |
 | `timeout` | any | The plugin's own deadline (40/40/25 s), an httpx timeout or the provider's timeout | yes |
 | `ConnectError`, `ProxyError`, … | any | Network: DNS, firewall, proxy refused the connection, TLS | yes |
+| `fetch_failed` | TinyFish | TinyFish named no code for the URL, or sent a text instead of a code; the text is in the error the model sees | yes → Firecrawl |
 | `no_result` | TinyFish | TinyFish's reply did not mention the URL (see *Edge cases*, redirects) | yes → Firecrawl |
 | `no_key` | any | Key not set in the profile | stage skipped |
 | `paused` | any | The provider's API answered HTTP 402 earlier (quota or credits used up); no request is sent until the pause ends (K7) | stage skipped |

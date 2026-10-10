@@ -21,7 +21,7 @@ FINAL_TINYFISH_CODES = frozenset(
 
 # E6: marker lists from the chain test prototype (2026-10-09).
 WALL = [
-    "cookies zustimmen", "cookie-zustimmung", "zustimmung", "einwilligung", "privacy center",
+    "cookies zustimmen", "cookie-zustimmung", "(?<!cookie-)zustimmung", "einwilligung", "privacy center",
     r"pur[- ]abo", "contentpass", r"werb(ung|e-) und tracking", "mit werbung", "werbefrei", "consent",
     "alle akzeptieren", "akzeptieren und weiter", "zustimmen und weiter", "accept all", "accept cookies",
     "we value your privacy", "datenschutzeinstellungen", "cookie-einstellungen", "cookie settings", "adblock",
@@ -95,7 +95,7 @@ def _host(url: str) -> str:
     """Host for the log line; never the full URL (query strings may carry tokens) and never raises."""
     try:
         return urlsplit(url).hostname or "<no host>"
-    except ValueError:
+    except Exception:  # ValueError for a malformed URL, other classes for a value that is no string
         return "<invalid url>"
 
 

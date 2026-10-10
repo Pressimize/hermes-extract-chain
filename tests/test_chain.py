@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 import pytest
 
@@ -58,6 +59,17 @@ def test_classify(content, error, expected):
 def test_each_marker_is_in_one_list_only():  # E6
     markers = WALL + PAYWALL_DEFINITE + PAYWALL
     assert len(markers) == len(set(markers))
+
+
+@pytest.mark.parametrize("markers", [WALL, PAYWALL])
+def test_no_marker_lies_inside_another_marker_of_its_list(markers):  # E6
+    plain = [m for m in markers if not set(m) & set("\\[](|?+")]  # markers that are their own example text
+    assert [(m, text) for text in plain for m in markers if m != text and re.search(m, text, re.IGNORECASE)] == []
+
+
+def test_cookie_zustimmung_counts_once():
+    assert classify(doc("Cookie-Zustimmung. " + ARTICLE)) == "ok"
+    assert classify(doc("Cookie-Zustimmung. Ihre Zustimmung fehlt. " + ARTICLE)) == "wall"
 
 
 def test_wall_window_short_text_checked_completely():
@@ -225,10 +237,12 @@ def test_log_line_never_raises_or_shows_full_url(caplog):
     caplog.set_level(logging.INFO, logger="extract_chain.chain")
     out = asyncio.run(run_chain("http://[::1", doc(ARTICLE), None, None))  # urlsplit raises ValueError here
     asyncio.run(run_chain("file:///tmp/x?token=abc", doc(ARTICLE), None, None))
+    asyncio.run(run_chain(123, doc(ARTICLE), None, None))  # urlsplit raises another class for a non-string
     assert out["error"] is None
     assert [r.getMessage() for r in caplog.records] == [
         "extract-chain <invalid url>: tinyfish=ok",
         "extract-chain <no host>: tinyfish=ok",
+        "extract-chain <invalid url>: tinyfish=ok",
     ]
 
 

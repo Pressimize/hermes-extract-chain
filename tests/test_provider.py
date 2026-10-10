@@ -247,13 +247,41 @@ def test_log_line_shows_error_codes(env, caplog):
     )
 
 
-def test_policy_check_error_fails_open(env, monkeypatch):
+@pytest.mark.parametrize("fails_for", ["a.example", "final.example"])  # the input URL, the final URL
+def test_policy_check_error_blocks(env, monkeypatch, fails_for):
     def broken(url):
-        raise ValueError("Invalid IPv6 URL")
+        if fails_for in url:
+            raise ValueError("Invalid IPv6 URL")
+
+    def redirected(request):
+        result = {"url": "https://a.example/", "final_url": "https://final.example/x", "text": ARTICLE}
+        return httpx.Response(200, json={"results": [result]})
 
     monkeypatch.setattr(provider, "check_website_access", broken)
-    out = extract(Api(tinyfish=tinyfish_echo), ["https://a.example/"])
-    assert out[0]["error"] is None and out[0]["content"] == ARTICLE
+    api = Api(tinyfish=redirected)
+    out = extract(api, ["https://a.example/"])
+    assert out[0]["url"] == "https://a.example/" and out[0]["content"] == ""
+    assert out[0]["error"] == "Blocked by website policy: the check failed for this URL (ValueError)"
+    assert len(api.requests) == (0 if fails_for == "a.example" else 1)  # an input URL is not even fetched
+
+
+def test_entries_that_are_no_strings_fail_alone(env):
+    api = Api(tinyfish=tinyfish_echo)
+    urls = [123, {"x": 1}, "https://a.example/", None]
+    out = extract(api, urls)
+    assert [r["url"] for r in out] == urls
+    assert [r["error"] for r in out] == ["extract-chain: not a URL"] * 2 + [None, "extract-chain: not a URL"]
+    assert json.loads(api.requests[0].content)["urls"] == ["https://a.example/"]
+
+
+def test_redirect_of_a_provider_api_is_not_followed(env):
+    def moved(request):
+        return httpx.Response(307, headers={"Location": "https://elsewhere.example/"})
+
+    api = Api(tinyfish=moved)
+    out = extract(api, ["https://a.example/"])
+    assert api.hosts() == ["api.fetch.tinyfish.ai", "api.firecrawl.dev"]  # the key went to no other host (A5)
+    assert out[0]["content"].startswith(NOTE_FIRECRAWL.format(reason="TinyFish: HTTP 307"))
 
 
 def test_missing_policy_module_refuses_every_url(env, monkeypatch, caplog):

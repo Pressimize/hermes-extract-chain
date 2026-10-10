@@ -61,12 +61,12 @@ def _left(seconds: float) -> str:
 
 
 def _blocked(url: str, entry_url: str | None = None) -> dict | None:
-    """Hermes' error entry if the website policy blocks ``url``, else None. A failing check allows, as in Hermes."""
+    """Hermes' error entry if the website policy blocks ``url``, else None. A check that fails blocks (S7)."""
     try:
         blocked = check_website_access(url)
-    except Exception as exc:  # e.g. ValueError from urlparse on a malformed final URL (S6)
-        log.warning("extract-chain: website policy check failed for a URL (allowed): %s", type(exc).__name__)
-        return None
+    except Exception as exc:  # e.g. ValueError from urlparse on a final URL that cannot be parsed
+        log.warning("extract-chain: website policy check failed for a URL (blocked): %s", type(exc).__name__)
+        blocked = {"message": f"Blocked by website policy: the check failed for this URL ({type(exc).__name__})"}
     if not blocked:
         return None
     info = blocked if isinstance(blocked, dict) else {}  # S6: a block of unexpected shape still blocks
@@ -111,7 +111,7 @@ class ExtractChainProvider(WebSearchProvider):
         if check_website_access is None:  # S7: never fetch without the blocklist
             log.warning("extract-chain: tools.website_policy not importable; every URL refused")
             return [failure(url, NO_POLICY) for url in urls]
-        unique = list(dict.fromkeys(urls))
+        unique = list(dict.fromkeys(url for url in urls if isinstance(url, str)))
         done = {url: entry for url in unique if (entry := _blocked(url))}
         todo = [url for url in unique if url not in done]
         if todo and is_interrupted():
@@ -122,11 +122,13 @@ class ExtractChainProvider(WebSearchProvider):
             except Exception as exc:  # S6: e.g. httpx.AsyncClient rejecting a malformed proxy variable
                 log.warning("extract-chain: call failed: %s", type(exc).__name__)
                 done.update({url: failure(url, f"extract-chain: {type(exc).__name__}") for url in todo})
-        return [copy.deepcopy(done[url]) for url in urls]  # duplicates get entries of their own (S5)
+        # duplicates get entries of their own (S5); an entry that is no string fails alone (S6)
+        return [copy.deepcopy(done[u]) if isinstance(u, str) else failure(u, "extract-chain: not a URL") for u in urls]
 
     async def _chain(self, urls: list[str]) -> dict[str, dict]:
         tf_key, fc_key, ke_key = (_env(k) for k in KEYS)
-        async with httpx.AsyncClient(transport=self._transport) as client:
+        # A5: no redirects, so a key never travels to another host
+        async with httpx.AsyncClient(transport=self._transport, follow_redirects=False) as client:
             if not tf_key:
                 first = {url: {"error": "TinyFish: no API key", "code": "no_key"} for url in urls}
             elif paused := self._paused_doc("TinyFish", tf_key):

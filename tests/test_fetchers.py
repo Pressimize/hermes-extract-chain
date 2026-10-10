@@ -50,14 +50,21 @@ def test_tinyfish_single_url_reply_with_other_url():
     assert out == {"http://a.example/x": {"title": "A", "content": "T", "final_url": "https://www.a.example/x"}}
 
 
-def test_tinyfish_error_code_is_safe_for_the_log():
-    reply = {"errors": [{"url": "u", "error": "Bad key tf-SECRET\nextract-chain forged: line " + "x" * 80}]}
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        ("BOT_BLOCKED", "bot_blocked"),  # a code, in whatever case
+        ("Bad key tf-SECRET\nextract-chain forged: line", "fetch_failed"),  # a text: nothing of it in the log
+        ("fetch failed for https://a.example/?token=abc123", "fetch_failed"),  # it may quote the URL
+        ("x" * 41, "fetch_failed"),
+        (None, "fetch_failed"),
+    ],
+)
+def test_tinyfish_error_code_is_a_code_or_fetch_failed(error, code):  # A1, L1
+    reply = {"errors": [{"url": "u", "error": error}]}
     out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), ["u"], "tf-SECRET")["u"]
-    assert out["error"].startswith("TinyFish: Bad key [key] extract-chain forged: line x")  # one line, no key
-    assert out["code"] == "bad_key_key_extract_chain_forged_line_xx"  # one word, 40 characters, no key
-    reply = {"errors": [{"url": "u", "error": "Page Not Found"}]}  # the reduced code is what K2 compares
-    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), ["u"], "k")["u"]
-    assert out["code"] == "page_not_found"
+    assert out["code"] == code
+    assert "tf-SECRET" not in out["error"] and "\n" not in out["error"]  # one line, no key
 
 
 def test_tinyfish_splits_batches_of_ten():
@@ -115,6 +122,7 @@ def test_tinyfish_urls_differing_only_in_the_trailing_slash_keep_their_own_resul
     only_one = {"results": [{"url": urls[1], "text": "T"}]}  # then that entry counts for both
     out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=only_one), urls, "k")
     assert [out[u]["content"] for u in urls] == ["T", "T"]
+    assert out[urls[0]] is not out[urls[1]]  # as two objects
 
     twice = {"results": [{"url": urls[1], "text": "T"}], "errors": [{"url": urls[1], "error": "bot_blocked"}]}
     out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=twice), urls, "tf-key")

@@ -22,7 +22,6 @@ TINYFISH_DEADLINE = 40.0
 FIRECRAWL_DEADLINE = 40.0
 KEENABLE_DEADLINE = 25.0
 ERROR_MAX = 200  # A4
-CODE_MAX = 40  # A1: TinyFish's error code as it appears in the log line
 TINYFISH_MAX_URLS = 10  # per request (TinyFish limit)
 FIRECRAWL_PDF_MAX_PAGES = 30  # Firecrawl bills one credit per PDF page
 
@@ -37,7 +36,7 @@ FIRECRAWL_BODY = {
 }
 
 
-_NOT_CODE = re.compile(r"[^a-z0-9_]+")
+_CODE = re.compile(r"[a-z0-9_]{1,40}")  # A1: what counts as an error code of TinyFish
 
 
 def _redact(detail: object, key: str) -> str:
@@ -111,14 +110,16 @@ async def tinyfish(client: httpx.AsyncClient, urls: list[str], key: str) -> dict
             put(item.get("url"), doc)
         for item in data.get("errors") or []:
             text = _redact(item.get("error") or "fetch failed", key)
-            put(item.get("url"), _error("TinyFish", text, _NOT_CODE.sub("_", text.lower())[:CODE_MAX]))
+            # L1: only a code reaches the log; any other text may quote the URL or the page
+            code = text.lower() if _CODE.fullmatch(text.lower()) else "fetch_failed"
+            put(item.get("url"), _error("TinyFish", text, code))
         if len(urls) == 1 and len(found) == 1 and _key(urls[0]) not in found:
             found = {_key(urls[0]): next(iter(found.values()))}  # reply names another URL (e.g. after a redirect)
     except Exception as exc:  # transport errors, deadline, malformed reply
         failed = _error("TinyFish", _describe(exc), _describe(exc))
         return {url: dict(failed) for url in urls}
     missing = _error("TinyFish", "no result", "no_result")
-    return {url: exact.get(url) or found.get(_key(url)) or dict(missing) for url in urls}
+    return {url: dict(exact.get(url) or found.get(_key(url)) or missing) for url in urls}  # one object per URL
 
 
 async def firecrawl(client: httpx.AsyncClient, url: str, key: str) -> dict:
