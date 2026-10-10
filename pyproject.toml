@@ -1,0 +1,28 @@
+# Development tooling only. The plugin itself is the directory extract_chain/ and is copied into
+# $HERMES_HOME/plugins/ without this file (design I3: no pyproject.toml inside the plugin directory).
+[project]
+name = "hermes-extract-chain"
+version = "0.2.0"
+description = "Hermes Agent plugin: web_extract fallback chain TinyFish -> Firecrawl -> Keenable"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Pressimize" }]
+# Ships with Hermes (core dependency); pinned to the version of Hermes v0.21.6.
+dependencies = ["httpx==0.28.1"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pyyaml>=6", "ruff>=0.13"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "ASYNC", "SIM"]

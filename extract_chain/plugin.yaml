@@ -1,0 +1,20 @@
+name: extract-chain
+version: 0.2.0
+description: "web_extract fallback chain: TinyFish (live) -> Firecrawl (live) -> Keenable (index copy), with notes for the model"
+author: Pressimize
+license: MIT
+homepage: "https://github.com/Pressimize/hermes-extract-chain"
+kind: backend
+requires_hermes: ">=0.21"
+provides_web_providers:
+  - extract-chain
+requires_env:
+  - name: TINYFISH_API_KEY
+    description: "TinyFish API key (stage 1, required)"
+    secret: true
+  - name: FIRECRAWL_API_KEY
+    description: "Firecrawl API key (stage 2, skipped if unset)"
+    secret: true
+  - name: KEENABLE_API_KEY
+    description: "Keenable API key (stage 3, skipped if unset)"
+    secret: true
