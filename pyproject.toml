@@ -2,7 +2,7 @@
 # $HERMES_HOME/plugins/ without this file (design I3: no pyproject.toml inside the plugin directory).
 [project]
 name = "hermes-extract-chain"
-version = "0.2.0"
+version = "0.2.1"
 description = "Hermes Agent plugin: web_extract fallback chain TinyFish -> Firecrawl -> Keenable"
 requires-python = ">=3.11"
 license = "MIT"

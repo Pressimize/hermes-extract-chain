@@ -2,11 +2,14 @@
 
 Every function returns result dicts and never raises. A failure becomes
 ``{"error": "<Provider>: <detail>", "code": "<short code>"}``; the code appears in the log line (L1).
+A reply of the provider's API that reports a failure also carries its HTTP ``status`` (K7).
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
+from typing import Any
 
 import httpx
 
@@ -19,6 +22,7 @@ TINYFISH_DEADLINE = 40.0
 FIRECRAWL_DEADLINE = 40.0
 KEENABLE_DEADLINE = 25.0
 ERROR_MAX = 200  # A4
+CODE_MAX = 40  # A1: TinyFish's error code as it appears in the log line
 TINYFISH_MAX_URLS = 10  # per request (TinyFish limit)
 FIRECRAWL_PDF_MAX_PAGES = 30  # Firecrawl bills one credit per PDF page
 
@@ -33,11 +37,19 @@ FIRECRAWL_BODY = {
 }
 
 
-def _error(provider: str, detail: object, code: str, key: str = "") -> dict:
-    text = str(detail).strip()
-    if key:  # S3: a reply that echoes the key must not carry it into the result
-        text = text.replace(key, "[key]")
-    return {"error": f"{provider}: {text[:ERROR_MAX]}", "code": code}
+_NOT_CODE = re.compile(r"[^a-z0-9_]+")
+
+
+def _redact(detail: object, key: str) -> str:
+    """One line (V1), and a reply that echoes the key must not carry it into the result or the log (S3)."""
+    text = " ".join(str(detail).split())
+    return text.replace(key, "[key]") if key else text
+
+
+def _error(provider: str, detail: object, code: str, key: str = "", status: int | None = None) -> dict:
+    """status: HTTP status of the provider's API reply, if that is what failed (read by K7)."""
+    failed = {"error": f"{provider}: {_redact(detail, key)[:ERROR_MAX]}", "code": code}
+    return failed if status is None else {**failed, "status": status}
 
 
 def _describe(exc: Exception) -> str:
@@ -54,7 +66,7 @@ def _json(response: httpx.Response) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-async def _request(client: httpx.AsyncClient, deadline: float, method: str, url: str, **kw) -> httpx.Response:
+async def _request(client: httpx.AsyncClient, deadline: float, method: str, url: str, **kw: Any) -> httpx.Response:
     async with asyncio.timeout(deadline):
         return await client.request(method, url, timeout=deadline, **kw)
 
@@ -80,7 +92,8 @@ async def tinyfish(client: httpx.AsyncClient, urls: list[str], key: str) -> dict
             headers={"X-API-Key": key, "Accept": "application/json"},
         )
         if response.status_code >= 300:
-            failed = _error("TinyFish", f"HTTP {response.status_code}", f"http_{response.status_code}")
+            status = response.status_code
+            failed = _error("TinyFish", f"HTTP {status}", f"http_{status}", status=status)
             return {url: dict(failed) for url in urls}
         data = response.json()
         found = {}
@@ -88,11 +101,11 @@ async def tinyfish(client: httpx.AsyncClient, urls: list[str], key: str) -> dict
             found[_key(item.get("url"))] = {
                 "title": str(item.get("title") or ""),
                 "content": str(item.get("text") or ""),
-                "final_url": item.get("final_url"),
+                "final_url": item.get("final_url") or item.get("url"),  # S7: keep the URL the reply names
             }
         for item in data.get("errors") or []:
-            code = str(item.get("error") or "fetch failed")
-            found[_key(item.get("url"))] = _error("TinyFish", code, code)
+            text = _redact(item.get("error") or "fetch failed", key)
+            found[_key(item.get("url"))] = _error("TinyFish", text, _NOT_CODE.sub("_", text.lower())[:CODE_MAX])
         if len(urls) == 1 and len(found) == 1 and _key(urls[0]) not in found:
             found = {_key(urls[0]): next(iter(found.values()))}  # reply names another URL (e.g. after a redirect)
     except Exception as exc:  # transport errors, deadline, malformed reply
@@ -115,7 +128,7 @@ async def firecrawl(client: httpx.AsyncClient, url: str, key: str) -> dict:
         payload = _json(response)
         if response.status_code >= 300 or not payload.get("success"):
             detail = f"API {response.status_code}: {payload.get('error') or response.text}"
-            return _error("Firecrawl", detail, f"api_{response.status_code}", key)
+            return _error("Firecrawl", detail, f"api_{response.status_code}", key, response.status_code)
         data = payload.get("data") or {}
         meta = data.get("metadata") or {}
         status = meta.get("statusCode")
@@ -148,7 +161,8 @@ async def keenable(client: httpx.AsyncClient, url: str, key: str) -> dict:
         if response.status_code >= 300:
             body = _json(response)
             detail = body.get("message") or body.get("error") or response.text.strip()
-            return _error("Keenable", detail or f"HTTP {response.status_code}", f"http_{response.status_code}", key)
+            status = response.status_code
+            return _error("Keenable", detail or f"HTTP {status}", f"http_{status}", key, status)
         data = response.json()
         return {
             "title": str(data.get("title") or ""),

@@ -31,8 +31,7 @@ PAYWALL_DEFINITE = [
     "nur f(ue|ü)r abonnenten", r"registrieren und weiterlesen", "behind a login or paywall",
 ]  # fmt: skip
 PAYWALL = [
-    "jetzt weiterlesen", "weiterlesen mit", "abo abschlie(ss|ß)en", "nur f(ue|ü)r abonnenten",
-    r"plus-(artikel|inhalt)", r"registrieren und weiterlesen",
+    "jetzt weiterlesen", "weiterlesen mit", "abo abschlie(ss|ß)en", r"plus-(artikel|inhalt)",
     "artikel freischalten", "anmelden und weiterlesen", r"spiegel\+", r"(?<!\w)z\+", r"(?<!\w)f\+",
     "sz plus", r"heise\+", "weltplus", "paywall",
 ]  # fmt: skip
@@ -88,7 +87,7 @@ def _result(url: str, doc: dict, *notes: str) -> dict:
     return {"url": url, "title": doc.get("title") or "", "content": content, "error": None, "metadata": metadata}
 
 
-def _failure(url: str, error: str) -> dict:
+def failure(url: str, error: str) -> dict:
     return {"url": url, "title": "", "content": "", "error": error, "metadata": {"sourceURL": url}}
 
 
@@ -129,7 +128,7 @@ async def run_chain(url: str, tinyfish: dict, firecrawl: Fetch | None, keenable:
         if kind == "paywall":
             return _result(url, tinyfish, NOTE_PAYWALL)
         if kind == "error" and tinyfish.get("code") in FINAL_TINYFISH_CODES:
-            return _failure(url, tinyfish["error"])
+            return failure(url, tinyfish["error"])
 
         reasons = [_reason("TinyFish", tinyfish, kind)]
         wall_page = tinyfish if kind == "wall" else None
@@ -151,6 +150,9 @@ async def run_chain(url: str, tinyfish: dict, firecrawl: Fetch | None, keenable:
         reasons.append(_reason("Keenable", page, kind))
         if wall_page is not None:
             return _result(url, wall_page, NOTE_WALL.format(reasons="; ".join(reasons)))
-        return _failure(url, "; ".join(reasons))
+        return failure(url, "; ".join(reasons))
+    except Exception as exc:  # S6: an unexpected failure only fails this URL, not the whole call
+        log.warning("extract-chain %s: chain failed: %s", _host(url), type(exc).__name__)
+        return failure(url, f"extract-chain: {type(exc).__name__}")
     finally:
         log.info("extract-chain %s: %s", _host(url), " ".join(steps))

@@ -143,7 +143,7 @@ Edge cases and failure behaviour: [docs/troubleshooting.md](docs/troubleshooting
 
 ## Costs and quotas
 
-Firecrawl is only used when TinyFish fails, and PDFs are capped at 30 pages there (one credit per page). Firecrawl still bills target 403/404 pages it returns as documents. For a hard cost cap, keep these off: TinyFish wallet auto-reload, Firecrawl auto-recharge, Keenable auto top-up. With them off, an exhausted quota gives HTTP 402, and the chain moves on to the next stage. Watch usage in the log:
+Firecrawl is only used when TinyFish fails, and PDFs are capped at 30 pages there (one credit per page). Firecrawl still bills target 403/404 pages it returns as documents. For a hard cost cap, keep these off: TinyFish wallet auto-reload, Firecrawl auto-recharge, Keenable auto top-up. With them off, an exhausted quota gives HTTP 402, and the chain moves on to the next stage. It then skips the exhausted provider without a request: TinyFish until five minutes after its daily reset at 00:00 UTC, Firecrawl and Keenable for 24 hours (`paused` in the log). Watch usage in the log:
 
 ```bash
 grep -o "firecrawl=[a-z_0-9]*" logs/agent.log | sort | uniq -c
@@ -164,7 +164,7 @@ Making providers configurable would need an adapter per provider declaring its r
 Hermes' Firecrawl provider needs the `firecrawl-py` SDK, which Hermes installs on first use. Calling the REST APIs directly needs nothing extra and gives control over timeouts, freshness and PDF limits.
 
 **Does it apply Hermes' website blocklist?**
-Yes. Hermes leaves this check to each provider. The plugin checks every URL before any request, and the final URL after redirects.
+Yes. Hermes leaves this check to each provider. The plugin checks every URL before any request, and the final URL after redirects. If a Hermes update ever moves the blocklist module, the plugin refuses every URL with a clear error instead of fetching without the blocklist.
 
 **Does it do web search?**
 No. `web.search_backend` is unaffected.

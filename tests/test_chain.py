@@ -9,6 +9,9 @@ from extract_chain.chain import (
     NOTE_PAYWALL,
     NOTE_PDF,
     NOTE_WALL,
+    PAYWALL,
+    PAYWALL_DEFINITE,
+    WALL,
     classify,
     run_chain,
 )
@@ -50,6 +53,11 @@ def tf_error(code):
 )
 def test_classify(content, error, expected):
     assert classify(doc(content, error)) == expected
+
+
+def test_each_marker_is_in_one_list_only():  # E6
+    markers = WALL + PAYWALL_DEFINITE + PAYWALL
+    assert len(markers) == len(set(markers))
 
 
 def test_wall_window_short_text_checked_completely():

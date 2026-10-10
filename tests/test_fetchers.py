@@ -46,7 +46,18 @@ def test_tinyfish_request_and_mapping():
 def test_tinyfish_single_url_reply_with_other_url():
     reply = {"results": [{"url": "https://www.a.example/x", "title": "A", "text": "T"}]}
     out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), ["http://a.example/x"], "k")
-    assert out == {"http://a.example/x": {"title": "A", "content": "T", "final_url": None}}
+    # the URL the reply names is kept as final URL, so the website policy sees it (S7)
+    assert out == {"http://a.example/x": {"title": "A", "content": "T", "final_url": "https://www.a.example/x"}}
+
+
+def test_tinyfish_error_code_is_safe_for_the_log():
+    reply = {"errors": [{"url": "u", "error": "Bad key tf-SECRET\nextract-chain forged: line " + "x" * 80}]}
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), ["u"], "tf-SECRET")["u"]
+    assert out["error"].startswith("TinyFish: Bad key [key] extract-chain forged: line x")  # one line, no key
+    assert out["code"] == "bad_key_key_extract_chain_forged_line_xx"  # one word, 40 characters, no key
+    reply = {"errors": [{"url": "u", "error": "Page Not Found"}]}  # the reduced code is what K2 compares
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), ["u"], "k")["u"]
+    assert out["code"] == "page_not_found"
 
 
 def test_tinyfish_splits_batches_of_ten():
@@ -66,10 +77,17 @@ def test_tinyfish_splits_batches_of_ten():
 @pytest.mark.parametrize(
     ("handler", "expected"),
     [
-        (lambda r: httpx.Response(429, text="slow down"), {"error": "TinyFish: HTTP 429", "code": "http_429"}),
+        (
+            lambda r: httpx.Response(429, text="slow down"),
+            {"error": "TinyFish: HTTP 429", "code": "http_429", "status": 429},
+        ),
         (
             lambda r: httpx.Response(200, json=["no", "dict"]),
             {"error": "TinyFish: AttributeError", "code": "AttributeError"},
+        ),
+        (
+            lambda r: httpx.Response(200, text="<html>no JSON</html>"),
+            {"error": "TinyFish: JSONDecodeError", "code": "JSONDecodeError"},
         ),
     ],
 )
@@ -143,7 +161,8 @@ def test_firecrawl_target_status(status, ok):
 def test_firecrawl_api_error():
     reply = httpx.Response(402, json={"success": False, "error": "Payment Required: Insufficient credits"})
     out = call(fetchers.firecrawl, lambda r: reply, "u", "k")
-    assert out == {"error": "Firecrawl: API 402: Payment Required: Insufficient credits", "code": "api_402"}
+    error = "Firecrawl: API 402: Payment Required: Insufficient credits"
+    assert out == {"error": error, "code": "api_402", "status": 402}
 
 
 # --- A3 Keenable, A4 -------------------------------------------------------------------------------
@@ -175,10 +194,13 @@ def test_keenable_request_and_success():
         ),
         (httpx.Response(504, text="Gateway timeout"), ("Keenable: Gateway timeout", "http_504")),
         (httpx.Response(500), ("Keenable: HTTP 500", "http_500")),
+        (httpx.Response(200, text="<html>no JSON</html>"), ("Keenable: JSONDecodeError", "JSONDecodeError")),
     ],
 )
 def test_keenable_errors(reply, expected):
-    assert call(fetchers.keenable, lambda r: reply, "u", "k") == {"error": expected[0], "code": expected[1]}
+    out = call(fetchers.keenable, lambda r: reply, "u", "k")
+    assert (out["error"], out["code"]) == expected
+    assert out.get("status") == (reply.status_code if reply.status_code >= 300 else None)  # read by K7
 
 
 def test_error_detail_truncated():

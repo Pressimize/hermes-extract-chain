@@ -8,7 +8,7 @@ How failures show up, what the log line means, typical problems with their fixes
 |---|---|
 | The tool result the model sees | Per URL either content (possibly with `[extract-chain]` notes at the top) or an `error` such as `TinyFish: bot_blocked; Firecrawl: target HTTP 403; Keenable: Gateway timeout` |
 | `logs/agent.log` in the Hermes home (INFO) | One line per URL: `extract-chain <host>: tinyfish=… firecrawl=… keenable=…` |
-| `logs/errors.log` (WARNING) | Plugin load failures, the website-policy import warning, Hermes' extract timeouts |
+| `logs/errors.log` (WARNING) | Plugin load failures, the website-policy import warning, the plugin's `chain failed` warning, the start of a pause (`… paused for <seconds> s`), Hermes' extract timeouts |
 | `hermes plugins list` | Whether `extract-chain` is enabled and loaded, or why it failed to load |
 
 Count how often each stage was needed, e.g. to watch Firecrawl credits:
@@ -24,7 +24,9 @@ grep -o "firecrawl=[a-z_0-9]*" logs/agent.log | sort | uniq -c
 |---|---|---|---|
 | Plugin not available | not in `plugins.enabled`, import error, `requires_hermes` mismatch, directory without `plugin.yaml`/`__init__.py` | Every `web_extract` call fails: *web is configured to use 'extract-chain' (set via hermes tools), but no registered web extract provider has that name.* | `errors.log`: `Failed to load plugin 'extract-chain': …` or `Plugin 'extract-chain' skipped: requires hermes >=0.21, running …`; `hermes plugins list` says *not enabled in config* |
 | Whole call | Hermes' `web.extract_timeout` reached | `Extract timed out after <n>s via extract-chain` for every URL of the call, including URLs that had already finished | `errors.log`: `web_extract provider 'extract-chain' timed out …` |
+| Whole call | Hermes' policy module cannot be imported (incompatible Hermes version) | `Blocked by website policy: extract-chain cannot load Hermes' website blocklist …` for every URL; nothing is fetched, and the keyless rescue does not step in | `errors.log`: `extract-chain: tools.website_policy not importable; every URL refused` |
 | Whole call | Bug in the plugin raises | `Error extracting content: …`. With `web.keyless_rescue` on, Hermes instead tries anonymous providers, and you see content without notes | traceback in `errors.log` |
+| One URL | Bug in the plugin raises while handling that URL | `error`: `extract-chain: <exception class>`; the other URLs of the call keep their results | `errors.log`: `extract-chain <host>: chain failed: <exception class>` |
 | One URL | Policy block | `error` with Hermes' block message plus a `blocked_by_policy` field | none; Hermes' policy logs |
 | One URL | All stages failed | `error` listing every stage's reason | the L1 line shows each stage's code |
 | One URL | A later stage delivered | content with a note naming the source and why the earlier stages failed | the L1 line |
@@ -49,6 +51,7 @@ Each stage that ran appears as `<stage>=<outcome>`. Success outcomes are the cla
 | `ConnectError`, `ProxyError`, … | any | Network: DNS, firewall, proxy refused the connection, TLS | yes |
 | `no_result` | TinyFish | TinyFish's reply did not mention the URL (see *Edge cases*, redirects) | yes → Firecrawl |
 | `no_key` | any | Key not set in the profile | stage skipped |
+| `paused` | any | The provider's API answered HTTP 402 earlier (quota or credits used up); no request is sent until the pause ends (K7) | stage skipped |
 | `interrupted` | Firecrawl, Keenable | The user stopped the turn | stage skipped |
 | `exception` | Firecrawl, Keenable | Unexpected error inside the stage (bug); details in the error text | yes |
 
@@ -66,13 +69,16 @@ The plugin is not loaded. Check, in this order:
 The TinyFish key is wrong or missing in the profile's `.env`. Hermes reads keys per profile; a key exported in the shell may not reach a gateway or a container. While this lasts, every URL goes to Firecrawl and costs credits.
 
 **`tinyfish=http_402`.**
-The free daily allowance is used up: 1,000 successful URLs per day, reset at 00:00 UTC, and the TinyFish wallet is empty. Wait for the reset or top up. In the meantime Firecrawl takes over and its credits drain quickly.
+The free daily allowance is used up: 1,000 successful URLs per day, reset at 00:00 UTC, and the TinyFish wallet is empty. Wait for the reset or top up. In the meantime Firecrawl takes over and its credits drain quickly. After the 402 the plugin skips TinyFish until 00:05 UTC (`tinyfish=paused`).
 
 **`tinyfish=http_429` / `firecrawl=api_429`.**
 Rate limits: TinyFish allows 150 URLs/min per key, Firecrawl's free plan 10 scrapes/min. Agents and profiles that share a key share the limit.
 
 **`firecrawl=api_402`.**
-Firecrawl credits are exhausted (1,000/month on the free plan). URLs that TinyFish cannot fetch now end up at Keenable, as index copies or not at all. Top up or wait for the monthly reset.
+Firecrawl credits are exhausted (1,000/month on the free plan). URLs that TinyFish cannot fetch now end up at Keenable, as index copies or not at all. Top up or wait for the monthly reset. After the 402 the plugin skips Firecrawl for 24 hours (`firecrawl=paused`); the same holds for Keenable.
+
+**`…=paused` although the credits are back.**
+A pause does not notice a top-up. It ends by itself (TinyFish at 00:05 UTC, the others after 24 hours); to use the stage at once, restart Hermes or the gateway. `errors.log` shows when a pause began: `extract-chain: Firecrawl paused for 86400 s (api_402)`.
 
 **`firecrawl=timeout` only in calls with several URLs.**
 Firecrawl's free plan scrapes 2 pages at a time and queues the rest. Queue time counts against the 30 s timeout. The URL moves on to Keenable; this is expected (K6).
@@ -104,8 +110,8 @@ A false alarm of the keyword rules, e.g. in an article *about* paywalls or cooki
 **The same wrong or stale result keeps coming back.**
 Hermes caches successful results, notes included, for `web.cache_ttl_minutes` (default 20). This includes a consent page returned with the wall note. Wait, or lower the TTL.
 
-**`errors.log`: `extract-chain: tools.website_policy not importable; website blocklist not applied`.**
-A Hermes update moved the policy module. The plugin keeps working but no longer applies the website blocklist (S7). Update the plugin.
+**Every URL fails with `Blocked by website policy: extract-chain cannot load Hermes' website blocklist …`.**
+A Hermes update moved the policy module, and the plugin fetches nothing without the blocklist (S7). `errors.log` shows `extract-chain: tools.website_policy not importable; every URL refused` for each call. Update the plugin; until then, set `web.extract_backend` to another provider.
 
 **Firecrawl credits drain faster than expected.**
 Firecrawl is only used when TinyFish fails. Common causes:
@@ -120,7 +126,7 @@ The `firecrawl=` counts in the log show which sites cause it.
 
 | Situation | Behaviour |
 |---|---|
-| Duplicate URLs in one call | Fetched once, returned at every position (S5). |
+| Duplicate URLs in one call | Fetched once, returned at every position as an entry of its own (S5). |
 | More than 10 URLs | Split into TinyFish batches of 10, sent concurrently. Hermes' `web_extract` passes at most 5. |
 | Redirect, single URL | TinyFish's entry is used even if it names the final URL. |
 | Redirect inside a multi-URL batch | If TinyFish reports only the final URL, the input URL gets `no_result` and goes to Firecrawl (one credit). Not observed in tests. |

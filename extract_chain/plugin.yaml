@@ -1,5 +1,5 @@
 name: extract-chain
-version: 0.2.0
+version: 0.2.1
 description: "web_extract fallback chain: TinyFish (live) -> Firecrawl (live) -> Keenable (index copy), with notes for the model"
 author: Pressimize
 license: MIT
