@@ -10,6 +10,7 @@ Versions:
 - **v0.2.2:** Two fixes from a third external code review: URLs that differ only in the trailing `/` get the TinyFish result that names them (A1), and a policy block of unexpected shape still blocks instead of raising (S6, S7). Both faults were reproduced before the fix and are covered by unit tests now; the replay output is identical to v0.2.0.
 - **v0.2.3:** Hardening from a fourth and a fifth external code review: a URL whose policy check raises is blocked (S7, D19), only a code of TinyFish reaches the log (A1, L1), an entry that is no string fails alone (S6), and redirects are explicitly not followed (A5). One marker rule changed (E6): `zustimmung` no longer counts inside `Cookie-Zustimmung`. On the 727 stored texts of the chain test, the live check and the search test this changes no classification, and the replay output is identical to v0.2.0. Before the release, v0.2.0 and v0.2.3 were run side by side on the same simulated provider replies (fetchers, provider, chain) and the tests of v0.2.0 were run against v0.2.3; every difference is an entry of the changelog.
 - **v0.2.4:** From a sixth and a seventh external code review: a TinyFish reply entry that is no object is skipped instead of failing the whole request, a reply that is no JSON object gives `malformed` (A1, A3), the pause table holds a digest instead of the key (K7), and a key is redacted in any case and percent-encoded (A4). Checked with the unit tests, the replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
+- **v0.2.5:** Bot-check pages (E7) and very short pages (E8) get classes of their own, the chain asks Firecrawl for a second opinion on a short TinyFish page (K2, K3), and a redirect is noted (V10). Checked with the unit tests and with stored data (section *v0.2.5: stored data*); unlike the releases before, the classification does change results.
 
 ## T1 – Unit tests
 
@@ -218,3 +219,47 @@ The review covered failure modes and costs: Hermes' extract path, plugin loading
 ## T5 – CI
 
 GitHub Actions (`ci.yml`) runs `ruff check`, `ruff format --check` and `pytest` on Python 3.11 and 3.14 for every push. The first green run was on 2026-10-09.
+
+## v0.2.5: stored data
+
+Three checks of v0.2.4 against v0.2.5 on stored data. Texts are never quoted; hosts, ids, lengths, classes and counts only.
+
+### Replay of the chain test
+
+`scripts/replay.py` on the 23 articles of the chain test, once with the v0.2.4 sources and once with v0.2.5.
+
+- Free articles complete: 13 of 14 in both versions. No free article gets a paywall note.
+- One line differs: `weltplus1` (paywalled). TinyFish's text has 268 visible characters, so it is `thin` now (E8); before, it was returned as `ok`. Firecrawl is asked and returns 12,863 characters, which carry the source note (V2) and the paywall note (V3).
+- Every other line is identical.
+
+### Classes of the 554 TinyFish texts of the search test
+
+Each text classified as a TinyFish document with v0.2.4 and v0.2.5.
+
+| Class | v0.2.4 | v0.2.5 |
+|---|---|---|
+| ok | 554 | 534 |
+| thin | – | 16 |
+| challenge | – | 4 |
+
+The 20 texts that changed class (visible length in characters):
+
+- `challenge`: addons.mozilla.org 209, pypi.org 209, www.amazon.com 142, www.techpowerup.com 267.
+- `thin`: caddy.community 460, caddy.current-version.com 66, caddyserver.com 489 (twice), community.bitdefender.com 260, dannyda.com 344, docs.docker.com 383, forum.opnsense.org 474, hatchbox.io 291, ollama.com 339, openrouter.ai 298, vaultwarden.discourse.group 284, www.youtube.com 164 (four times).
+
+No text changed in any other way. About half of the 20 are real short pages (a version page, forum and docs pages); in the chain each costs one Firecrawl request, which is 3.6 % of the pages.
+
+### Job-board measurement
+
+Provider outputs for job-board pages (two runs), variants TinyFish markdown and Firecrawl main content. A line with an error is an error document. Class under v0.2.5; `redirect` is the condition of V10:
+
+| Page | TinyFish | Firecrawl |
+|---|---|---|
+| isaca | challenge (41 characters) | error in run 1; challenge (98 characters) in run 2 |
+| stepstone-liste | thin (410) | ok (40,524) |
+| euremote-a2 (run 2) | not measured | challenge (189) |
+| monster | ok (1,339), redirect true | ok (3,178), redirect true |
+| meinestadt | error | ok |
+| all other lines | ok | ok |
+
+Under v0.2.4 every line without an error was `ok`. The expectations of the specification are met: isaca is a challenge on both providers (Firecrawl in run 2), the StepStone list via TinyFish is `thin`, euremote-a2 via Firecrawl is a challenge, monster via TinyFish is `ok` with the redirect condition true. No other line has the redirect condition true.

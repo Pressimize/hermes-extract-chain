@@ -61,16 +61,22 @@ This plugin registers its own extract provider that chains three services per UR
   - `paywall`: done, with the paywall note (V3).
   - `wall`: go to stage 3. Firecrawl is skipped, because in tests it hit the same wall.
   - `error` with a final code (`page_not_found`, `login_required`, `invalid_url`, `invalid_redirect_url`, `content_too_large`): done; the error passes through unchanged.
+  - `challenge` (a bot-check page, E7): go to stage 2 like a non-final error; reason `TinyFish: bot check page`. The page is kept as the bot-check page so far (V11).
+  - `thin` (E8): go to stage 2 for a second opinion; TinyFish's page is kept as the short page so far. Reason `TinyFish: very short page (<n> characters)`.
   - Any other error (including `no result`, `no API key`, a pause (K7), HTTP and transport errors) or `empty`: go to stage 2.
 - **K3** Stage 2, Firecrawl. Without `FIRECRAWL_API_KEY` the stage is skipped with the reason `no API key`.
   - `ok`: done, with the source note (V2).
   - `paywall`: done, with the source and paywall notes.
   - `wall`: go to stage 3; the Firecrawl page is the best result so far.
-  - `error` or `empty`: go to stage 3.
+  - `error`, `empty` or `challenge` (reason `Firecrawl: bot check page`): go to stage 3. A `challenge` page is kept as the bot-check page so far, unless TinyFish's is kept already (V11).
+  - If TinyFish was `thin` and Firecrawl is anything but `ok`, `paywall` or `thin` (`error`, `empty`, `challenge`, `wall`, `no API key`, a pause), the chain ends: TinyFish's short page is returned with V9, naming Firecrawl's reason, e.g. `Firecrawl: consent wall`. Keenable is not asked, because an older index copy must not replace a page that a live fetch delivered only because that page is short (D23).
+  - `thin`: Firecrawl's page is a short page too, and the chain ends (Keenable is not asked, D23).
+    - TinyFish was `thin` as well: the longer of the two short pages is returned, TinyFish's on a tie, with V8; if it is Firecrawl's, V2 comes first.
+    - TinyFish failed (`error`, `empty`, `challenge`): Firecrawl's page is returned with V2 and V8a.
 - **K4** Stage 3, Keenable. Without `KEENABLE_API_KEY` the stage is skipped with the reason `no API key`.
-  - `ok`: done, with the index note (V4).
+  - `ok` or `thin`: done, with the index note (V4). A short index copy is still the best there is; no further note.
   - `paywall`: done, with the index and paywall notes.
-  - Anything else: if a wall page exists from an earlier stage, it is returned with the wall note (V5) naming all reasons. Otherwise the result is an `error` listing the reasons of all stages, e.g. `TinyFish: bot_blocked; Firecrawl: target HTTP 403; Keenable: Gateway timeout`.
+  - Anything else (`challenge` counts like an error; a Keenable bot-check page is never kept, but its reason is listed): if a wall page exists from an earlier stage, it is returned with the wall note (V5) naming all reasons. Otherwise, if a bot-check page was kept (K2, K3), it is returned with V11 naming all reasons; the wall page wins when both exist. Otherwise the result is an `error` listing the reasons of all stages, e.g. `TinyFish: bot_blocked; Firecrawl: target HTTP 403; Keenable: Gateway timeout`.
 - **K5** Each provider is asked at most once per URL and call. No retries.
 - **K6** Stages 2 and 3 run concurrently across the URLs of a call; within one URL the stages run in order. There is no concurrency limit of its own. Firecrawl's free plan allows 2 concurrent scrapes and queues the rest; queue time counts against its 30 s timeout, so an overflowing URL usually times out and moves on to stage 3.
 - **K7** Pauses. When a provider's API answers HTTP 402 (quota or credits used up), that stage is skipped without a request for a while, so that a used-up quota does not cost one failing request per URL:
@@ -90,7 +96,7 @@ This plugin registers its own extract provider that chains three services per UR
 
 ## 6. Classification
 
-Checks run in this order; the first match wins. The rules come from the chain-test prototype (2026-10-09) with these changes:
+Checks run in this order; the first match wins: E1, E2, E7, E3, E4, E8, E5. The rules come from the chain-test prototype (2026-10-09) with these changes:
 
 - the wall window (E3) and the paywall area of whole pages (E4);
 - a paywall ends the chain (K2, K3, D4); the prototype still asked Keenable afterwards;
@@ -101,6 +107,7 @@ Rules:
 
 - **E1** `error`: the result has an error text.
 - **E2** `empty`: fewer than 20 characters remain after removing HTML tags and stripping whitespace. Firecrawl's empty `<body></body>` counts as empty.
+- **E7** `challenge`: the visible text (as in E2) is shorter than `CHALLENGE_BELOW` = 1,500 characters and contains at least one marker of the list `CHALLENGE` (bot-check phrases such as "not a robot", "verify you are human", "checking your browser", "captcha", "access denied"; case-insensitive). The length cap keeps real articles that mention these phrases out of the class. Providers return bot checks with status 200, so the text decides (D21). Checked after E2 and before E3.
 - **E3** `wall`: at least 2 different wall markers occur in the check area. The check area is the raw `content` (Markdown or HTML, uncleaned): the whole text below 4,000 characters, otherwise the first 2,000 characters.
   - A real consent wall replaces the content: it stands at the beginning, or the page is short (derStandard via TinyFish: 992 characters, wall text at the end).
   - The prototype also checked the last 2,000 characters. On whole pages (Firecrawl) that caused false alarms from consent texts in the footer (Welt, n-tv).
@@ -109,6 +116,7 @@ Rules:
   - **Whole page:** Firecrawl is asked for the main content only (`onlyMainContent: true`, A2). On the tested news sites its Markdown still carries navigation, teasers of other articles, the footer and subscription boxes, so these rules treat it as a whole page. The false notes on stern.de were seen with exactly this request body.
   - **Why:** whole pages end with footer and subscription dialogs. On stern.de, "Artikel freischalten", "PUR-Abo abschließen" and "STERN PLUS-Inhalte" sit at 81–95 % of the page; Spiegel and Welt are similar. Since TinyFish is always blocked on stern.de, every stern article would otherwise get a false paywall note.
   - Real paywall notices sit right after the teaser (Firecrawl in the chain test: at 13–45 % of the page). For main-content providers the notice is at the very end (Exa on heise+: 96 %), so the cut applies to Firecrawl only (D12).
+- **E8** `thin`: not error, empty, challenge, wall or paywall, and the visible text is shorter than `THIN_BELOW` = 500 characters. A short text is no error; it is a reason to ask a second provider (K2, K3, D20).
 - **E5** `ok`: otherwise.
 - **E6** The marker lists `WALL`, `PAYWALL_DEFINITE` and `PAYWALL` come from the prototype; v0.2.0 dropped one marker that matched a single site only (no change in the replay). Each marker is in one list only; two that the prototype also listed as general markers are definite only, which changes no result. No marker lies completely inside another marker of its list, so `zustimmung` does not count within `Cookie-Zustimmung` (since v0.2.3; no stored test text is classified differently). Markers that only overlap still count as two, e.g. "Alle akzeptieren und weiter" or "mit Werbung und Tracking": that is the wording of consent buttons. Matching is case-insensitive. They target German news sites plus common English consent phrases.
 
@@ -121,6 +129,14 @@ Rules:
 - **V5** Wall without alternative: `[extract-chain] Consent wall detected; no alternative source found (<reasons>). The text below is the consent page.`
 - **V6** A direct TinyFish success gets no note.
 - **V7** Firecrawl PDF cut short (A2): `[extract-chain] PDF cut to the first <n> of <total> pages (Firecrawl page cap).`
+- **V8** Both live fetches short: `[extract-chain] Very short page (<n> characters); a second live fetch (Firecrawl) was short as well.` n is the visible length of the returned text.
+- **V8a** Firecrawl short after a TinyFish failure: `[extract-chain] Very short page (<n> characters).`
+- **V9** Short page without second opinion: `[extract-chain] Very short page (<n> characters); no second opinion (<Firecrawl reason>).`
+- **V11** Bot-check page without alternative: `[extract-chain] This looks like a bot-check page; no other source had the page (<reasons>). The text below is what the site returned.` The reasons of all stages, joined with `; ` as in V5. If the kept page is Firecrawl's, V2 comes first. The result is no error.
+- **V10** Redirect: `[extract-chain] The site redirected to <final_url>; the text below is from that page.` The URL is reduced to one line and cut to 200 characters. It is added for the returned page of any stage, after the other notes, when the provider reports a `final_url` that points to another page than the requested URL:
+  - the host differs after lowercasing and removing one leading `www.`, or
+  - the requested path has at least one non-empty segment and the final path has none or only a locale-like single segment (`^[a-z]{2}(-[a-z]{2})?$`, case-insensitive, e.g. `/de/`, `/en-us/`).
+  - No note for differences in scheme, trailing slash, query, fragment or letter case, for the same path, or when `final_url` is missing or not a string. V10 is a note only; it never changes the class or the stage order (D22).
 
 ## 8. Provider calls (direct REST)
 
@@ -166,7 +182,7 @@ Rules:
 ## 11. Logging
 
 - **L1** Logger `logging.getLogger(__name__)`. For each URL that reaches the chain, one INFO line: `extract-chain <host>: tinyfish=<outcome> [firecrawl=<outcome>] [keenable=<outcome>]`.
-  - The outcome is the class from section 6, or for errors a short code:
+  - The outcome is the class from section 6 (including `challenge` and `thin`), or for errors a short code:
     - TinyFish's own code (e.g. `bot_blocked`), or `fetch_failed` when TinyFish sent no code or a text instead of a code (A1);
     - `http_<status>` (API status of TinyFish/Keenable);
     - `api_<status>` (Firecrawl API);
@@ -181,12 +197,13 @@ Rules:
 ## 12. Tests and acceptance
 
 - **T1** Unit tests (pytest, no network, `httpx.MockTransport`):
-  - every rule E1–E5 with boundaries; no marker in two lists (E6);
-  - every branch K2–K4 with missing keys (K1, K3, K4);
+  - every rule E1–E5, E7 and E8 with boundaries (499/500 and 1,499/1,500 visible characters, tags do not count, a long article with a bot-check phrase stays `ok`); no marker in two lists (E6);
+  - every branch K2–K4 with missing keys (K1, K3, K4), including `thin` and `challenge` at each stage and no Keenable call after a short live page (K3);
+  - the redirect note V10 with its cases (host, path to root or locale root, no note for `www.`, scheme, slash, query, case, missing or non-string `final_url`, cut at 200 characters, order of notes);
   - at most one call per provider and URL (K5); concurrency across URLs (K6); pauses with a test clock (K7);
   - order, count and duplicates (S5); ignored kwargs (S4); exceptions become errors (S6);
   - website policy before and after redirects and with the policy module missing (S7); interrupts (S8);
-  - mapping of provider replies (A1–A3) including Firecrawl `statusCode`, the PDF cap, batch splitting and transport errors; notes V1–V7;
+  - mapping of provider replies (A1–A3) including Firecrawl `statusCode`, the PDF cap, batch splitting and transport errors; notes V1–V10;
   - `register(ctx)` and `plugin.yaml` (S1), with the same version as `pyproject.toml`; properties and `is_available` (S2); keys absent from results and logs (S3); log line format and codes (L1).
 - **T2** Replay of the chain on the stored raw results of the chain test (23 articles, all three providers per URL; data not published): at least 13 of 14 free articles complete; no paywall note on a free article from TinyFish text; every difference to the prototype explained.
 - **T3** Live check through Hermes' real `web_extract` path, without an LLM, in a throwaway profile:
@@ -207,6 +224,8 @@ Rules:
 See also [troubleshooting.md](troubleshooting.md), section *Edge cases*.
 
 - Paywalls are not bypassed; teasers without markers stay undetected.
+- The bot-check list (E7) and the length limits (E7, E8) are heuristics. A bot check in other words stays `ok` or `thin`; a real short page that mentions "captcha" or "access denied" is treated as a bot check and moves on to Firecrawl and Keenable. If they have nothing better, the page is still returned, with V11. A real short page costs one extra Firecrawl request (about 3.6 % of pages in the search test); its text still reaches the model when Firecrawl is short or fails (V8, V9).
+- Redirects are noted only (V10). A redirect to another page is not an error, and the chain does not fetch the requested page again.
 - Keenable copies may be older than the live page. The note says so; the age itself is unknown.
 - Marker rules are keyword rules tuned on German news sites. An article *about* paywalls or cookie consent can trigger a note.
 - Firecrawl free plan: 10 scrapes/min, 2 concurrent, 1,000 credits/month. It bills target 403/404 pages that come back as documents, and one credit per PDF page (capped at 30).
@@ -240,3 +259,9 @@ See also [troubleshooting.md](troubleshooting.md), section *Edge cases*.
 | D17 | One client per call, not one kept across calls (A5) | Hermes runs tool calls on several event loops and, when called from inside a running loop, closes the loop after the call. A client kept across calls would be bound to a closed loop. The saving would be one TLS handshake per provider and call. |
 | D18 | No retry (K5) and no cap on the text that is classified (E3, E4) | The next stage is the retry; waiting for `Retry-After` does not fit into Z1. Classifying costs about 13 ms per 100,000 characters (measured), and main-content providers put the paywall notice at the very end, where a cap would lose it. |
 | D19 | Block a URL whose policy check raises (S7) | Up to v0.2.2 such a URL was allowed, on the assumption that Hermes does the same. Hermes allows only when the policy file is faulty; its own providers return an error when the check of a final URL raises. A result whose blocklist status is unknown should not reach the model. |
+| D20 | A short text is not an error (E8, K2, K3) | 20 of 554 TinyFish texts of the search test are below 500 characters, and about half of them are real pages. The second opinion costs one Firecrawl request for about 3.6 % of pages. |
+| D21 | Bot-check pages are recognised by a short phrase list plus a length cap (E7), not by length alone and not by HTTP status | Providers return bot checks with status 200; length alone would turn real short pages into failures. |
+| D22 | A redirect is noted, not treated as a failure (V10) | Many redirects are harmless; the model can judge with the note. |
+| D23 | No Keenable request after two short live results, or after a short TinyFish page and a failed Firecrawl (K3) | An older index copy must not replace a live page only because that page is short. |
+| D24 | No switch for the provider order in v0.2.5 | Asked for job listings, where TinyFish returns no links; decided to wait and see what E7 and E8 already fix. |
+| D25 | A bot-check page without alternative is returned with a note, like a consent wall (V5), not as an error | The marker list can match a real short page. |

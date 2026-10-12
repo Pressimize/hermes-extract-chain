@@ -31,7 +31,8 @@ flowchart LR
 | content | – | the content, no note |
 | a teaser with paywall markers | – | the teaser + `Paywall indicators found …` |
 | `page_not_found`, `login_required`, `invalid_url`, `invalid_redirect_url`, `content_too_large` | – | the error |
-| another error (`bot_blocked`, `target_http_error`, `timeout`, …) or an empty page | Firecrawl | the content + `Live fetch via Firecrawl (TinyFish: …)` |
+| another error (`bot_blocked`, `target_http_error`, `timeout`, …), an empty page or a bot-check page | Firecrawl | the content + `Live fetch via Firecrawl (TinyFish: …)` |
+| a very short page (under 500 characters) | Firecrawl, for a second opinion | Firecrawl's content, or the short page + `Very short page …` |
 | a cookie/consent wall | Keenable | the copy + `Copy from Keenable's index; it may be older …` |
 
 If all stages fail, the model gets one error with every reason, e.g. `TinyFish: bot_blocked; Firecrawl: target HTTP 403; Keenable: Gateway timeout`. Each provider is asked at most once per URL; URLs of one call run concurrently.

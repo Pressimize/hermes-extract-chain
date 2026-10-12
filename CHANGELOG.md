@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.5 – 2026-10-12
+
+Bot-check pages and very short pages no longer pass as good results, and a redirect is noted. From a measurement on job-board pages.
+
+- New class `challenge` (E7): a text under 1,500 visible characters with a bot-check phrase ("not a robot", "checking the site connection security", "captcha", …) is a failure at every stage and moves the chain on. Before, only errors and empty pages did.
+  - Keenable results that are bot-check pages are no longer accepted, and Firecrawl results that are bot-check pages lead on to Keenable.
+  - If no stage has anything better, the first bot-check page is returned with the note V11, not as an error, because the phrase list can match a real short page. A consent wall still wins over it. Without any page, the error lists all reasons as before.
+- New class `thin` (E8): a text under 500 visible characters is no longer `ok`. A short TinyFish page triggers a second opinion from Firecrawl; the longer short page wins, and a short page without second opinion (any Firecrawl outcome but ok, paywall or thin, a consent wall included) is returned with a note (V8, V8a, V9). Keenable is not asked after a short live result (D23).
+- New note V10: the site redirected to another host, or to the home page or a locale root. A note only; the class and the order of stages do not change.
+- The log line shows `challenge` and `thin` as outcomes.
+- Behaviour change: a text of 20 to 499 visible characters was `ok` before. Of the 554 stored TinyFish texts of the search test, 16 become `thin` and 4 `challenge`. In the replay of the chain test one article differs (a TinyFish text of 268 characters, now answered by Firecrawl).
+- Design: rules E7, E8, V8–V11, changes to K2–K4 and decisions D20–D25; results on stored data in `docs/validation.md`.
+
 ## 0.2.4 – 2026-10-10
 
 From a sixth and a seventh external code review.

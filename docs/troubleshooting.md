@@ -36,7 +36,7 @@ Problems with a single URL never raise and never fail other URLs of the same cal
 
 ## Log line codes (L1)
 
-Each stage that ran appears as `<stage>=<outcome>`. Success outcomes are the classes `ok`, `paywall`, `wall`, `empty`. Errors show a short code.
+Each stage that ran appears as `<stage>=<outcome>`. The outcomes are the classes `ok`, `paywall`, `wall`, `empty`, `challenge` (bot-check page) and `thin` (very short page). Errors show a short code.
 
 | Code | Stage | Meaning | Chain continues? |
 |---|---|---|---|
