@@ -1,0 +1,27 @@
+Du prüfst Code eines kleinen Python-Plugins für Hermes Agent (ein KI-Agent mit Werkzeugen).
+
+Zweck des Plugins: Es registriert einen eigenen Anbieter für Hermes' Werkzeug `web_extract`, das Webseiten als Text holt. Für jede URL fragt es nacheinander drei Dienste ab (TinyFish, dann Firecrawl, dann Keenable) und nimmt den nächsten, wenn der vorige scheitert, eine Consent-Wall, einen Bot-Check oder eine leere bzw. sehr kurze Seite liefert. Kommt der Text nicht direkt von TinyFish, setzt es eine kurze Notiz an den Anfang, damit das Sprachmodell weiß, woher der Text stammt.
+
+Umgebung: Python >= 3.11 (Hermes läuft auf 3.14), nur Standardbibliothek und httpx 0.28.1. Tests mit pytest und httpx.MockTransport, ohne Netzwerk. Die Hermes-Module `agent.web_search_provider`, `tools.website_policy` und `tools.interrupt` werden in den Tests durch Stellvertreter ersetzt.
+
+Bewusste, dokumentierte Entscheidungen – bitte NICHT als Befund melden:
+- keine eigene Begrenzung der Parallelität (Hermes übergibt höchstens 5 URLs; eine Warteschlange würde die Fristen sprengen),
+- keine Wiederholungsversuche (die nächste Stufe ist der Retry), keine Längenbegrenzung des klassifizierten Texts,
+- ein neuer httpx.AsyncClient pro extract-Aufruf (Hermes nutzt mehrere Event-Loops),
+- keine Konfiguration, alle Grenzwerte als Konstanten; Anbieter und Reihenfolge fest,
+- Paywall nur als Hinweis, kein Umgehen; Marker-Listen sind bewusst deutsch-lastige Heuristiken,
+- breites `except Exception` an den Stellen, die laut Kommentar nie werfen dürfen (S6),
+- keine SSRF-Prüfung der Ziel-URLs (die Seiten holen die externen Dienste, Hermes prüft die Eingabe-URLs vorher),
+- Pausen nach HTTP 402 nur im Speicher.
+
+Dieser Bereich: zwei Entwicklerwerkzeuge, die nicht mit dem Plugin ausgeliefert werden. `scripts/live_check.py` ruft echte URLs über Hermes' echten web_extract-Pfad in einem Wegwerf-Profil ab (ohne LLM) und schreibt Ergebnisse in ein Ausgabeverzeichnis. `scripts/replay.py` spielt die Kette auf gespeicherten Rohdaten eines früheren Tests ab und vergleicht mit einem Prototyp; die Rohdaten enthalten Artikeltexte und werden nicht veröffentlicht. Angehängt sind beide Skripte; das Plugin selbst (extract_chain/) ist hier nicht angehängt, bitte nur die Skripte bewerten.
+
+Aufgabe: Nenne höchstens 10 konkrete Befunde in diesen Kategorien: potenzielle Bugs, Edge Cases die zu Fehlverhalten führen, Security, Performance, Abweichung von Best Practices, schlechter Stil.
+
+Für jeden Befund:
+- Kategorie
+- Datei und Zeilennummer (die Zeile, wie sie in der angehängten Datei steht)
+- Was genau passiert, mit einer konkreten Eingabe oder Situation, die das Fehlverhalten auslöst
+- Kurzer Vorschlag zur Behebung
+
+Wichtig: Keine Vermutungen ohne Codebezug. Nur Befunde, die du an einer konkreten Codezeile festmachen kannst. Lieber weniger und belastbar als viele und spekulativ. Sortiere nach Schwere, den wichtigsten zuerst. Antworte auf Deutsch, knapp.
