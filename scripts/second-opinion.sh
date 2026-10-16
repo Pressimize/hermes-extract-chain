@@ -8,8 +8,9 @@ set -uo pipefail
 PROMPT_FILE="${1:?Prompt-Datei fehlt}"; shift
 # Rangfolge nach Andres Einschaetzung (2026-10-16), beste zuerst.
 RANKED="${OPINION_MODELS:-muse-spark-1.3-contributor-free space-bunny-free deepseek-v4.1-flash-free cat-jam-free glm-5.3-flash-free mimo-v2.6-flash-free longcat-2.5-preview-free big-pickle}"
-# Zusaetzlich je Lauf ein Rotationsmodell aus allen Free-Modellen: das mit den wenigsten Eintraegen in EINDRUECKE.
-POOL="${OPINION_POOL:-$RANKED ll-alpha-free}"
+# Zusaetzlich je Lauf ein Rotationsmodell: das mit den wenigsten Eintraegen in EINDRUECKE,
+# bei Gleichstand zuerst unbewertete, dann die hinteren der Rangfolge (die vorderen kommen ohnehin dran).
+POOL="${OPINION_POOL:-ll-alpha-free big-pickle longcat-2.5-preview-free mimo-v2.6-flash-free glm-5.3-flash-free cat-jam-free deepseek-v4.1-flash-free space-bunny-free muse-spark-1.3-contributor-free}"
 WANT="${OPINION_COUNT:-2}"        # so viele erfolgreiche Antworten aus RANKED
 TIMEOUT="${OPINION_TIMEOUT:-400}"
 
@@ -17,12 +18,15 @@ command -v opencode >/dev/null || npm i -g opencode-ai >/dev/null 2>&1 || { echo
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 WORK="$ROOT/.opinion"
+rm -rf "$WORK"   # Reste frueherer Laeufe nicht mit neuen verwechseln
 mkdir -p "$WORK"
 grep -qx '.opinion/' "$ROOT/.git/info/exclude" 2>/dev/null || echo '.opinion/' >> "$ROOT/.git/info/exclude"
 
 # Anhaenge muessen im Arbeitsordner liegen, sonst lehnt opencode den Lesezugriff ab.
 ATTACH=()
 for f in "$@"; do
+  [ -f "$f" ] || { echo "Anhang fehlt: $f" >&2; exit 1; }
+  [ -e "$WORK/$(basename "$f")" ] && { echo "Doppelter Anhang-Dateiname: $(basename "$f")" >&2; exit 1; }
   cp "$f" "$WORK/$(basename "$f")"
   ATTACH+=(-f "$(basename "$f")")
 done
@@ -63,10 +67,12 @@ for m in $RANKED; do
 done
 
 # Rotation: am wenigsten erprobtes Modell, das in diesem Lauf noch nicht gefragt wurde.
+rot=""
 for m in $(for p in $POOL; do echo "$(count_rows "$p") $p"; done | sort -n -s -k1,1 | cut -d' ' -f2); do
   [[ " ${TRIED[*]-} " == *" $m "* ]] && continue
-  ask "$m" && { echo "[Rotation] $m"; break; }
+  ask "$m" && { echo "[Rotation] $m"; rot=1; break; }
 done
+[ -n "$rot" ] || echo "[Rotation] kein weiteres Modell hat geantwortet"
 
 [ "${#USED[@]}" -gt 0 ] || { echo "Keine Antwort erhalten." >&2; exit 2; }
-echo "Bitte je Modell eine Zeile in docs/modell-eindruecke.md eintragen."
+echo "Bitte je Modell mit Antwort eine Zeile in docs/modell-eindruecke.md eintragen (Rate-Limit/Fehler: keine Zeile)."
