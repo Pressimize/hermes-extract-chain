@@ -18,25 +18,47 @@ command -v opencode >/dev/null || npm i -g opencode-ai >/dev/null 2>&1 || { echo
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 WORK="$ROOT/.opinion"
+
+# Erst alles pruefen und einlesen, dann den Arbeitsordner leeren (Anhaenge koennen in .opinion/ liegen).
+[ -r "$PROMPT_FILE" ] && [ -s "$PROMPT_FILE" ] || { echo "Prompt-Datei fehlt oder ist leer: $PROMPT_FILE" >&2; exit 1; }
+PROMPT="$(cat "$PROMPT_FILE")"
+STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
+NAMES=()
+for f in "$@"; do
+  [ -f "$f" ] || { echo "Anhang fehlt: $f" >&2; exit 1; }
+  b="$(basename "$f")"
+  [[ " ${NAMES[*]-} " == *" $b "* ]] && { echo "Doppelter Anhang-Dateiname: $b" >&2; exit 1; }
+  cp "$f" "$STAGE/$b" || { echo "Anhang nicht kopierbar: $f" >&2; exit 1; }
+  NAMES+=("$b")
+done
+
 rm -rf "$WORK"   # Reste frueherer Laeufe nicht mit neuen verwechseln
 mkdir -p "$WORK"
 grep -qx '.opinion/' "$ROOT/.git/info/exclude" 2>/dev/null || echo '.opinion/' >> "$ROOT/.git/info/exclude"
-
 # Anhaenge muessen im Arbeitsordner liegen, sonst lehnt opencode den Lesezugriff ab.
 ATTACH=()
-for f in "$@"; do
-  [ -f "$f" ] || { echo "Anhang fehlt: $f" >&2; exit 1; }
-  [ -e "$WORK/$(basename "$f")" ] && { echo "Doppelter Anhang-Dateiname: $(basename "$f")" >&2; exit 1; }
-  cp "$f" "$WORK/$(basename "$f")"
-  ATTACH+=(-f "$(basename "$f")")
+for b in ${NAMES[@]+"${NAMES[@]}"}; do
+  cp "$STAGE/$b" "$WORK/$b" || { echo "Anhang nicht kopierbar: $b" >&2; exit 1; }
+  ATTACH+=(-f "$b")
 done
-PROMPT="$(cat "$PROMPT_FILE")"
 
 EINDRUECKE="$ROOT/docs/modell-eindruecke.md"
-count_rows() { local n; n=$(grep -c "^| $1 |" "$EINDRUECKE" 2>/dev/null); echo "${n:-0}"; }
+FEHLVERSUCHE="$ROOT/docs/modell-fehlversuche.md"   # schreibt das Skript selbst, mitcommitten
+# Rotation zaehlt Antworten und Fehlversuche, damit ein Modell ohne Antwort nicht jeden Lauf zuerst drankommt.
+count_rows() { local a b; a=$(grep -c "^| $1 |" "$EINDRUECKE" 2>/dev/null); b=$(grep -c "^| $1 |" "$FEHLVERSUCHE" 2>/dev/null); echo $(( ${a:-0} + ${b:-0} )); }
+fail() {  # fail <modell> <grund> <dauer>
+  [ -f "$FEHLVERSUCHE" ] || printf '# Fehlversuche der Review-Modelle
+
+Vom Skript geschrieben, zaehlt fuer die Rotation mit.
+
+| Modell | Datum | Grund | Dauer |
+|---|---|---|---|
+' > "$FEHLVERSUCHE"
+  echo "| $1 | $(date +%F) | $2 | ${3}s |" >> "$FEHLVERSUCHE"
+}
 
 ask() {  # ask <modell> -> 0 bei Antwort
-  local m="$1" out log start pid rc dur
+  local m="$1" out log start pid rc dur g
   TRIED+=("$m")
   out="$WORK/$m.md"; log="$WORK/$m.log"
   start=$(date +%s)
@@ -51,10 +73,11 @@ ask() {  # ask <modell> -> 0 bei Antwort
   done
   wait "$pid"; rc=$?; dur=$(( $(date +%s) - start ))
   if grep -q "Rate limit exceeded" "$log"; then
-    echo "[$m] Rate-Limit nach ${dur}s"; rm -f "$out"; return 1
+    echo "[$m] Rate-Limit nach ${dur}s"; rm -f "$out"; fail "$m" "Rate-Limit" "$dur"; return 1
   fi
   if [ $rc -ne 0 ] || [ ! -s "$out" ]; then
-    echo "[$m] Fehler (rc=$rc, ${dur}s), siehe $log"; rm -f "$out"; return 1
+    if [ $rc -eq 124 ]; then g="Timeout"; else g="Fehler rc=$rc"; fi
+    echo "[$m] $g (${dur}s), siehe $log"; rm -f "$out"; fail "$m" "$g" "$dur"; return 1
   fi
   echo "[$m] ok (${dur}s) -> $out"; USED+=("$m"); return 0
 }
@@ -75,4 +98,4 @@ done
 [ -n "$rot" ] || echo "[Rotation] kein weiteres Modell hat geantwortet"
 
 [ "${#USED[@]}" -gt 0 ] || { echo "Keine Antwort erhalten." >&2; exit 2; }
-echo "Bitte je Modell mit Antwort eine Zeile in docs/modell-eindruecke.md eintragen (Rate-Limit/Fehler: keine Zeile)."
+echo "Bitte je Modell mit Antwort eine Zeile in docs/modell-eindruecke.md eintragen (Rate-Limit/Fehler: keine Zeile, die stehen schon in docs/modell-fehlversuche.md)."
