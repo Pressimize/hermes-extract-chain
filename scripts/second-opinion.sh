@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Zweite Meinung von kostenlosen OpenCode-Modellen einholen (ohne API-Key).
+# Aufruf: scripts/second-opinion.sh <prompt-datei> [anhang ...]
+# Ergebnis: .opinion/<modell>.md je Modell, Logs in .opinion/<modell>.log
+# Modelle per Umgebungsvariable OPINION_MODELS (Leerzeichen-getrennt) ueberschreibbar.
+set -uo pipefail
+
+PROMPT_FILE="${1:?Prompt-Datei fehlt}"; shift
+# Rangfolge nach Andres Einschaetzung (2026-10-16), beste zuerst.
+RANKED="${OPINION_MODELS:-muse-spark-1.3-contributor-free space-bunny-free deepseek-v4.1-flash-free cat-jam-free glm-5.3-flash-free mimo-v2.6-flash-free longcat-2.5-preview-free big-pickle}"
+# Zusaetzlich je Lauf ein Rotationsmodell aus allen Free-Modellen: das mit den wenigsten Eintraegen in EINDRUECKE.
+POOL="${OPINION_POOL:-$RANKED ll-alpha-free}"
+WANT="${OPINION_COUNT:-2}"        # so viele erfolgreiche Antworten aus RANKED
+TIMEOUT="${OPINION_TIMEOUT:-400}"
+
+command -v opencode >/dev/null || npm i -g opencode-ai >/dev/null 2>&1 || { echo "opencode-Installation fehlgeschlagen" >&2; exit 1; }
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+WORK="$ROOT/.opinion"
+mkdir -p "$WORK"
+grep -qx '.opinion/' "$ROOT/.git/info/exclude" 2>/dev/null || echo '.opinion/' >> "$ROOT/.git/info/exclude"
+
+# Anhaenge muessen im Arbeitsordner liegen, sonst lehnt opencode den Lesezugriff ab.
+ATTACH=()
+for f in "$@"; do
+  cp "$f" "$WORK/$(basename "$f")"
+  ATTACH+=(-f "$(basename "$f")")
+done
+PROMPT="$(cat "$PROMPT_FILE")"
+
+EINDRUECKE="$ROOT/docs/modell-eindruecke.md"
+count_rows() { local n; n=$(grep -c "^| $1 |" "$EINDRUECKE" 2>/dev/null); echo "${n:-0}"; }
+
+ask() {  # ask <modell> -> 0 bei Antwort
+  local m="$1" out log start pid rc dur
+  TRIED+=("$m")
+  out="$WORK/$m.md"; log="$WORK/$m.log"
+  start=$(date +%s)
+  # Prompt vor -f, sonst liest opencode ihn als Dateinamen.
+  ( cd "$WORK" && exec timeout "$TIMEOUT" opencode run -m "opencode/$m" "$PROMPT" ${ATTACH[@]+"${ATTACH[@]}"} \
+      --print-logs --log-level INFO >"$out" 2>"$log" ) &
+  pid=$!
+  # Bei Rate-Limit haengt der Client still; Log beobachten und frueh abbrechen.
+  while kill -0 "$pid" 2>/dev/null; do
+    grep -q "Rate limit exceeded" "$log" 2>/dev/null && { kill "$pid" 2>/dev/null; break; }
+    sleep 5
+  done
+  wait "$pid"; rc=$?; dur=$(( $(date +%s) - start ))
+  if grep -q "Rate limit exceeded" "$log"; then
+    echo "[$m] Rate-Limit nach ${dur}s"; rm -f "$out"; return 1
+  fi
+  if [ $rc -ne 0 ] || [ ! -s "$out" ]; then
+    echo "[$m] Fehler (rc=$rc, ${dur}s), siehe $log"; rm -f "$out"; return 1
+  fi
+  echo "[$m] ok (${dur}s) -> $out"; USED+=("$m"); return 0
+}
+
+USED=(); TRIED=()
+ok=0
+for m in $RANKED; do
+  [ "$ok" -ge "$WANT" ] && break
+  ask "$m" && ok=$((ok+1))
+done
+
+# Rotation: am wenigsten erprobtes Modell, das in diesem Lauf noch nicht gefragt wurde.
+for m in $(for p in $POOL; do echo "$(count_rows "$p") $p"; done | sort -n -s -k1,1 | cut -d' ' -f2); do
+  [[ " ${TRIED[*]-} " == *" $m "* ]] && continue
+  ask "$m" && { echo "[Rotation] $m"; break; }
+done
+
+[ "${#USED[@]}" -gt 0 ] || { echo "Keine Antwort erhalten." >&2; exit 2; }
+echo "Bitte je Modell eine Zeile in docs/modell-eindruecke.md eintragen."
