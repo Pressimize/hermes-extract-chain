@@ -19,15 +19,30 @@ command -v opencode >/dev/null || npm i -g opencode-ai >/dev/null 2>&1 || { echo
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 WORK="$ROOT/.opinion"
 
+# Nur ein Lauf gleichzeitig: alle teilen sich .opinion/ und die Protokolldateien.
+LOCK="$ROOT/.opinion.lock"
+grep -qx '.opinion.lock' "$ROOT/.git/info/exclude" 2>/dev/null || echo '.opinion.lock' >> "$ROOT/.git/info/exclude"
+exec 9>"$LOCK" || { echo "Sperrdatei nicht anlegbar: $LOCK" >&2; exit 1; }
+flock -n 9 || { echo "Es laeuft bereits ein second-opinion-Lauf (Sperre $LOCK)" >&2; exit 1; }
+
 # Erst alles pruefen und einlesen, dann den Arbeitsordner leeren (Anhaenge koennen in .opinion/ liegen).
 [ -r "$PROMPT_FILE" ] && [ -s "$PROMPT_FILE" ] || { echo "Prompt-Datei fehlt oder ist leer: $PROMPT_FILE" >&2; exit 1; }
 PROMPT="$(cat "$PROMPT_FILE")"
-STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
+STAGE="$(mktemp -d)" && [ -d "$STAGE" ] || { echo "mktemp -d fehlgeschlagen" >&2; exit 1; }
+trap 'rm -rf "$STAGE"' EXIT
 NAMES=()
 for f in "$@"; do
   [ -f "$f" ] || { echo "Anhang fehlt: $f" >&2; exit 1; }
   b="$(basename "$f")"
-  [[ " ${NAMES[*]-} " == *" $b "* ]] && { echo "Doppelter Anhang-Dateiname: $b" >&2; exit 1; }
+  for n in ${NAMES[@]+"${NAMES[@]}"}; do
+    [ "$n" = "$b" ] && { echo "Doppelter Anhang-Dateiname: $b" >&2; exit 1; }
+  done
+  # <modell>.md/.log sind Ausgabedateien in .opinion/ und wuerden den Anhang ueberschreiben.
+  for m in $RANKED $POOL; do
+    if [ "$b" = "$m.md" ] || [ "$b" = "$m.log" ]; then
+      echo "Anhang-Name kollidiert mit Ausgabedatei von Modell $m: $b (bitte umbenennen)" >&2; exit 1
+    fi
+  done
   cp "$f" "$STAGE/$b" || { echo "Anhang nicht kopierbar: $f" >&2; exit 1; }
   NAMES+=("$b")
 done
