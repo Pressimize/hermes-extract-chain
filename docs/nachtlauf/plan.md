@@ -40,3 +40,4 @@ Nicht an die Modelle: `docs/` (Konsistenz Doku ↔ Code prüfe ich selbst), `scr
 - **00:45** `OPINION_TIMEOUT=900` statt 400, weil mehrere Modelle (Longcat, Big Pickle, GLM, MiMo) mit Werkzeugaufrufen und langem Nachdenken über 400 s brauchten.
 - **01:25** Die Prompts enthalten zusätzlich die Zeile „Arbeitsweise: Prüfe ausschließlich die angehängten Dateien …“. GLM (49.000 Token Nachdenken) und MiMo (14 Werkzeugaufrufe) liefen auch in 900 s in den Timeout.
 - Nicht mehr verfügbar beim Anbieter: `muse-spark-1.3-contributor-free`, `cat-jam-free`, `ll-alpha-free` („Model not found“). Neu verfügbar und zusätzlich gefragt: `beam-free`. Nemotron-Modelle sind verfügbar, laut `CLAUDE.md` aber nicht zu nutzen.
+- **04:32** Letzter Modellaufruf beendet. Eine Wiederholungsrunde für alle Lücken (MiMo, GLM, Longcat, Big Pickle), danach keine weitere.
