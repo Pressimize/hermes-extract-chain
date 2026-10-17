@@ -142,7 +142,7 @@ The `firecrawl=` counts in the log show which sites cause it.
 | Target 403/404 via Firecrawl | Error `target HTTP <status>`; Firecrawl still bills one credit. |
 | Long PDF where TinyFish fails | Firecrawl reads the first 30 pages; the note says *PDF cut to the first 30 of N pages*. |
 | `content_too_large`, `login_required`, `page_not_found` | Final; no other provider is asked. |
-| Page that loads with status 200 but shows "Access denied" or a challenge text | Not recognised as a failure if TinyFish returns it as content (rare; TinyFish normally reports `bot_blocked`). |
+| Page that loads with status 200 but shows "Access denied" or a challenge text | Recognised as a bot-check page if it is shorter than 1,500 visible characters and contains a phrase of the list (E7); the chain moves on to Firecrawl and Keenable. If neither has the page, the bot-check page comes back with the note V11. A bot check in other words, or a longer one, is not recognised. |
 | English-language paywalls | Markers are mostly German. An English teaser is usually not detected (D5 applies). |
 | Missing TinyFish key | The provider reports itself unavailable, and Hermes hides `web_extract` unless another web backend is available. If the tool is still offered, stage 1 fails with `no_key` for all URLs and the chain continues with Firecrawl. |
 | Missing Firecrawl or Keenable key | That stage is skipped (`no_key`). |
