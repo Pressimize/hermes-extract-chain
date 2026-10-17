@@ -22,7 +22,7 @@ def test_tinyfish_request_and_mapping():
     seen = {}
 
     def handler(request):
-        seen["headers"], seen["body"] = request.headers, json.loads(request.content)
+        seen["method"], seen["headers"], seen["body"] = request.method, request.headers, json.loads(request.content)
         return httpx.Response(
             200,
             json={
@@ -35,7 +35,8 @@ def test_tinyfish_request_and_mapping():
 
     urls = ["https://a.example/x", "https://b.example/", "https://c.example/"]
     out = call(fetchers.tinyfish, handler, urls, "tf-key")
-    assert seen["headers"]["x-api-key"] == "tf-key"
+    assert seen["method"] == "POST"
+    assert seen["headers"]["x-api-key"] == "tf-key" and seen["headers"]["accept"] == "application/json"
     assert seen["body"] == {"urls": urls, "format": "markdown", "per_url_timeout_ms": 30000, "ttl": 3600}
     # trailing slash tolerated
     assert out["https://a.example/x"] == {"title": "A", "content": "T", "final_url": "https://a.example/y"}
@@ -67,17 +68,25 @@ def test_tinyfish_error_code_is_a_code_or_fetch_failed(error, code):  # A1, L1
     assert "tf-SECRET" not in out["error"] and "\n" not in out["error"]  # one line, no key
 
 
-def test_tinyfish_splits_batches_of_ten():
-    sizes = []
+@pytest.mark.parametrize(("count", "sizes"), [(10, [10]), (12, [2, 10])])  # at most 10 per request: 10 is not split
+def test_tinyfish_splits_batches_of_ten(monkeypatch, count, sizes):
+    seen, nested = [], []
+    real = fetchers.tinyfish
+
+    async def guarded(client, urls, key):  # a split that never ends fails here instead of running for ever
+        nested.append(len(urls))
+        assert len(nested) <= 3
+        return await real(client, urls, key)
 
     def handler(request):
         urls = json.loads(request.content)["urls"]
-        sizes.append(len(urls))
+        seen.append(len(urls))
         return httpx.Response(200, json={"results": [{"url": u, "text": u} for u in urls]})
 
-    urls = [f"https://e.example/{i}" for i in range(12)]
+    monkeypatch.setattr(fetchers, "tinyfish", guarded)
+    urls = [f"https://e.example/{i}" for i in range(count)]
     out = call(fetchers.tinyfish, handler, urls, "k")
-    assert sorted(sizes) == [2, 10]
+    assert sorted(seen) == sizes
     assert [out[u]["content"] for u in urls] == urls
 
 
@@ -139,6 +148,27 @@ def test_tinyfish_urls_differing_only_in_the_trailing_slash_keep_their_own_resul
     assert [out[u].get("code") for u in urls] == ["bot_blocked", "bot_blocked"]  # the later entry counts
 
 
+def test_tinyfish_matching_ignores_only_the_trailing_slash():  # A1
+    reply = {"results": [{"url": "https://a.example/p", "text": "T"}]}
+    urls = ["https://a.example/pX", "https://a.example/p"]
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), urls, "k")
+    assert [out[u].get("code") for u in urls] == ["no_result", None]
+
+
+def test_tinyfish_url_without_entry_is_not_given_another_entry():  # A1: only one entry for one URL is passed on
+    only_second = {"results": [{"url": "u2", "text": "T2"}]}
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=only_second), ["u1", "u2"], "k")
+    assert [out[u].get("code") for u in ("u1", "u2")] == ["no_result", None]
+    nothing = {"results": []}
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=nothing), ["u"], "k")
+    assert out["u"]["code"] == "no_result"
+    two = {
+        "results": [{"url": "https://o.example/1", "text": "other"}, {"url": "https://a.example/x/", "text": "mine"}]
+    }
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=two), ["https://a.example/x"], "k")
+    assert out["https://a.example/x"]["content"] == "mine"
+
+
 @pytest.mark.parametrize(
     ("fetch", "provider", "target"),
     [
@@ -172,11 +202,12 @@ def test_firecrawl_request_and_success():
     seen = {}
 
     def handler(request):
-        seen["auth"], seen["body"] = request.headers["authorization"], json.loads(request.content)
+        seen["method"], seen["auth"] = request.method, request.headers["authorization"]
+        seen["body"] = json.loads(request.content)
         return httpx.Response(200, json=firecrawl_reply(url="https://a.example/final"))
 
     out = call(fetchers.firecrawl, handler, "https://a.example/", "fc-key")
-    assert seen["auth"] == "Bearer fc-key"
+    assert seen["method"] == "POST" and seen["auth"] == "Bearer fc-key"
     assert seen["body"] == {
         "url": "https://a.example/",
         "formats": ["markdown"],
@@ -195,7 +226,7 @@ def test_firecrawl_pdf_page_cap_reported():
     assert "pdf_pages" not in call(fetchers.firecrawl, lambda r: httpx.Response(200, json=whole), "u", "k")
 
 
-@pytest.mark.parametrize(("status", "ok"), [(200, True), (304, True), (403, False), (404, False)])
+@pytest.mark.parametrize(("status", "ok"), [(200, True), (304, True), (300, False), (403, False), (404, False)])
 def test_firecrawl_target_status(status, ok):
     out = call(fetchers.firecrawl, lambda r: httpx.Response(200, json=firecrawl_reply(status, "")), "u", "k")
     assert ("error" not in out) is ok
@@ -210,6 +241,35 @@ def test_firecrawl_api_error():
     assert out == {"error": error, "code": "api_402", "status": 402}
 
 
+def test_firecrawl_success_must_be_true():  # A2: HTTP 200 with "success": false is an API error
+    reply = httpx.Response(200, json={"success": False, "error": "Rate limited"})
+    out = call(fetchers.firecrawl, lambda r: reply, "u", "k")
+    assert out == {"error": "Firecrawl: API 200: Rate limited", "code": "api_200", "status": 200}
+
+
+@pytest.mark.parametrize(
+    ("fetch", "target", "body", "code"),
+    [
+        (fetchers.tinyfish, ["u"], {"results": [{"url": "u", "text": "T"}]}, "http_300"),
+        (fetchers.firecrawl, "u", firecrawl_reply(), "api_300"),
+        (fetchers.keenable, "u", {"url": "u", "content": "C"}, "http_300"),
+    ],
+)
+def test_status_300_is_an_error_even_with_a_valid_body(fetch, target, body, code):  # A1-A3, A5: non-2xx
+    out = call(fetch, lambda r: httpx.Response(300, json=body), target, "k")
+    assert (out["u"] if fetch is fetchers.tinyfish else out)["code"] == code
+
+
+def test_missing_title_and_text_give_empty_strings():  # A1-A3: the chain classifies an empty text as empty (E2)
+    tinyfish = call(fetchers.tinyfish, lambda r: httpx.Response(200, json={"results": [{"url": "u"}]}), ["u"], "k")
+    assert tinyfish == {"u": {"title": "", "content": "", "final_url": "u"}}
+    page = {"success": True, "data": {"metadata": {"statusCode": 200}}}
+    firecrawl = call(fetchers.firecrawl, lambda r: httpx.Response(200, json=page), "u", "k")
+    assert firecrawl == {"title": "", "content": "", "final_url": None}
+    keenable = call(fetchers.keenable, lambda r: httpx.Response(200, json={"url": "u"}), "u", "k")
+    assert keenable == {"title": "", "content": "", "final_url": "u"}
+
+
 # --- A3 Keenable, A4 -------------------------------------------------------------------------------
 
 
@@ -222,6 +282,7 @@ def test_keenable_request_and_success():
 
     out = call(fetchers.keenable, handler, "https://a.example/?q=1", "ke-key")
     request = seen["request"]
+    assert request.method == "GET"
     assert request.url.params["url"] == "https://a.example/?q=1"
     assert request.headers["authorization"] == "Bearer ke-key"
     assert request.headers["x-keenable-title"] == "hermes-extract-chain"
@@ -237,6 +298,7 @@ def test_keenable_request_and_success():
             ),
             ("Keenable: The page is behind a login or paywall", "http_422"),
         ),
+        (httpx.Response(422, json={"error": "Unprocessable entity"}), ("Keenable: Unprocessable entity", "http_422")),
         (httpx.Response(504, text="Gateway timeout"), ("Keenable: Gateway timeout", "http_504")),
         (httpx.Response(500), ("Keenable: HTTP 500", "http_500")),
         (httpx.Response(200, text="<html>no JSON</html>"), ("Keenable: malformed reply", "malformed")),
