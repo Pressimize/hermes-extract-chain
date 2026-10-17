@@ -10,6 +10,7 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.2.3:** unit tests and replay (output identical to v0.2.0); the one marker change (E6) alters no classification of the 727 stored texts of the chain test, the live check and the search test. v0.2.0 and v0.2.3 were run side by side on the same simulated provider replies (fetchers, provider, chain), and the tests of v0.2.0 were run against v0.2.3; every difference is an entry of the changelog.
 - **v0.2.4:** unit tests, replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
 - **v0.2.5:** unit tests and stored data (section *v0.2.5: stored data*). Unlike the releases before, the classification changes results.
+- **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 are now killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
 
 ## T1 – Unit tests
 
