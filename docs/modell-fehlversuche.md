@@ -34,3 +34,7 @@ Vom Skript geschrieben, zaehlt fuer die Rotation mit.
 | mimo-v2.6-flash-free | 2026-10-17 | Timeout | 901s |
 | longcat-2.5-preview-free | 2026-10-17 | Fehler rc=0 | 591s |
 | big-pickle | 2026-10-17 | Timeout | 900s |
+| mimo-v2.6-flash-free | 2026-10-17 | Timeout | 900s |
+| mimo-v2.6-flash-free | 2026-10-17 | Timeout | 900s |
+| big-pickle | 2026-10-17 | Timeout | 900s |
+| longcat-2.5-preview-free | 2026-10-17 | Fehler rc=0 | 606s |
