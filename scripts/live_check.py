@@ -61,6 +61,29 @@ def calls(cases):
     return list(groups.values())
 
 
+def check_call(group, results, lines):
+    """L1 line to show per case, and problems: a Keenable result (L1 keenable=ok/paywall) without note V4.
+
+    L1 lines name only the host, so cases that share a host are checked together: that host must have at least
+    as many results with the note as lines with a Keenable result.
+    """
+    by_host = defaultdict(list)
+    for _, line in lines:
+        by_host[line.split(" ", 2)[1].rstrip(":")].append(line)
+    hosts = [urlsplit(case["url"]).hostname or "" for case in group]
+    shown, problems = [], []
+    for host in hosts:
+        found = by_host.get(host, [])
+        shown.append(found[0] if len(found) == 1 else f"({len(found)} log lines for this host)" if found else "")
+    for host in dict.fromkeys(hosts):
+        cases = [(case, res) for case, res, h in zip(group, results, hosts, strict=False) if h == host]
+        wanted = sum("keenable=ok" in line or "keenable=paywall" in line for line in by_host.get(host, []))
+        noted = sum((res.get("content") or "").startswith(KEENABLE_NOTE) for _, res in cases)
+        if noted < wanted:
+            problems.append(f"{', '.join(case['id'] for case, _ in cases)}: Keenable result without note")
+    return shown, problems
+
+
 def main():
     cases_file, out = sys.argv[1], sys.argv[2]
     profile = sys.argv[3]
@@ -101,12 +124,10 @@ def main():
                 problems.append(f"{row['ids']}: {duration} s")
             if [r.get("url") for r in results] != urls:
                 problems.append(f"{row['ids']}: order/count {[r.get('url') for r in results]}")
-            by_host = {line.split(" ", 2)[1].rstrip(":"): line for _, line in collect.lines}
-            for case, res in zip(group, results, strict=False):
-                line = by_host.get(urlsplit(case["url"]).hostname or "", "")
+            shown, found = check_call(group, results, collect.lines)
+            problems += found
+            for case, res, line in zip(group, results, shown, strict=False):
                 content = res.get("content") or ""
-                if ("keenable=ok" in line or "keenable=paywall" in line) and not content.startswith(KEENABLE_NOTE):
-                    problems.append(f"{case['id']}: Keenable result without note")
                 first = content.split("\n", 1)[0] if content.startswith("[extract-chain]") else ""
                 print(f"{case['id']:<16} {duration:>5} s  {line.split(': ', 1)[-1]:<45} "
                       f"len={len(content):>6}  {first[16:70]}{(res.get('error') or '')[:70]}", flush=True)  # fmt: skip
