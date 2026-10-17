@@ -40,9 +40,10 @@ def other_doc(provider, d):
     detail = err.split(" failed: ", 1)[-1]
     try:  # Keenable's JSON body as stored by Hermes' provider
         body = json.loads(detail)
-        detail = body.get("message") or body.get("error") or detail
     except ValueError:
-        pass
+        body = None
+    if isinstance(body, dict):  # a detail like "402" is JSON too, but no body
+        detail = body.get("message") or body.get("error") or detail
     return {"error": f"{provider}: {detail}"[:210]}
 
 
