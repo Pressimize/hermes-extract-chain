@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Fixes from the overnight review (`docs/nachtlauf/`). No change to the interface, the notes or the order of providers.
+
+- A `<` in the text (`x < 10`, `>>> 1 < 2`) no longer swallows everything up to the next `>` when the visible length is measured. A programming article could be classified as `empty` or `thin` before and was replaced by Firecrawl or Keenable. The tag pattern is also linear now; a page with many `<` and no `>` took seconds of CPU before (N01).
+
 ## 0.2.5 – 2026-10-12
 
 Bot-check pages and very short pages no longer pass as good results, and a redirect is noted. From a measurement on job-board pages.

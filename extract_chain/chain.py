@@ -65,7 +65,8 @@ CHALLENGE = [
     "access denied", "request blocked", "unusual traffic",
 ]  # fmt: skip
 
-_TAGS = re.compile(r"<[^>]*>")
+# A tag starts with a letter, "/" or "!" and holds no "<": "a < b ... c > d" is text, and the match stays linear.
+_TAGS = re.compile(r"</?[a-z!][^<>]*>", re.IGNORECASE)
 _WALL_RX = [re.compile(m, re.IGNORECASE) for m in WALL]
 _PAYWALL_DEFINITE_RX = [re.compile(m, re.IGNORECASE) for m in PAYWALL_DEFINITE]
 _PAYWALL_RX = [re.compile(m, re.IGNORECASE) for m in PAYWALL]
