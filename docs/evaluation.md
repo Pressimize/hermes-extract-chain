@@ -123,13 +123,7 @@ Index-based providers answer in 0.5–0.9 s; these were also the ones with outda
 
 ## Test 3 – Live check of the plugin
 
-54 URLs through Hermes' real `web_extract` path:
-
-- 23 chain-test articles;
-- 28 new articles from 15 publishers;
-- Stack Overflow, a 404 page and Python documentation.
-
-Results: 29 of 30 free articles complete (TinyFish alone: 20), no false paywall or wall note, longest call 19.9 s. Details and per-URL table: [validation.md](validation.md), data: [live-check results](../data/live-check/results.csv).
+54 URLs through Hermes' real `web_extract` path: 29 of 30 free articles complete (TinyFish alone: 20), no false paywall or wall note. Setup and results: [validation.md](validation.md); per-URL data: [live-check results](../data/live-check/results.csv).
 
 ## Free tiers and costs (vendor pages, 2026-10-09)
 

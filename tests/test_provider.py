@@ -215,17 +215,16 @@ def test_policy_checked_on_final_url_of_later_stages(env, monkeypatch, stage):
 
 def test_interrupt_stops_before_requests(env, monkeypatch):
     monkeypatch.setattr(provider, "is_interrupted", lambda: True)
+    monkeypatch.setattr(provider, "check_website_access", block_host("b.example"))
     api = Api()
-    out = extract(api, ["https://a.example/"])
+    out = extract(api, ["https://a.example/", "https://b.example/"])
     assert out[0]["error"] == "Interrupted" and api.requests == []
+    assert out[1]["error"] == "Blocked by website policy: b.example"  # S8: a policy block keeps its entry
 
 
 def test_interrupt_between_stages(env, monkeypatch):
-    calls = []
-
     def tinyfish_then_interrupt(request):
         monkeypatch.setattr(provider, "is_interrupted", lambda: True)
-        calls.append(request)
         return tinyfish_blocked(request)
 
     api = Api(tinyfish=tinyfish_then_interrupt)

@@ -1,20 +1,19 @@
 # Validation
 
-Results for T1–T5 in [design.md](design.md). No article texts are stored here; the raw data stays outside the repository. URL lists and per-URL results: [`data/`](../data). How the providers were chosen: [evaluation.md](evaluation.md).
+Results for T1–T4 in [design.md](design.md); T5 (lint, CI) is what CI itself runs. No article texts are stored here; the raw data stays outside the repository. URL lists and per-URL results: [`data/`](../data). How the providers were chosen: [evaluation.md](evaluation.md).
 
-Versions:
+Which check ran against which version. What each version changed: [CHANGELOG.md](../CHANGELOG.md).
 
-- **v0.1.0:** T2 and T3 ran against this version, on 2026-10-09.
-- **v0.2.0:** It added the website-policy and interrupt handling (S7, S8), the Firecrawl PDF cap (A2, V7), TinyFish batch splitting and the error codes in the log line (L1). The classification and the chain are unchanged. v0.2.0 was checked with the unit tests, the replay and a live smoke test (section *Edge-case review*).
-- **v0.2.1:** A stage is paused after HTTP 402 (K7); this was checked with unit tests and a test clock only, because no real 402 was available. Without Hermes' blocklist module every URL is refused (S7). Hardening after two external code reviews: an unexpected error stays with its URL (S6), duplicates get entries of their own (S5), TinyFish's error code is made safe for the log line, and a TinyFish entry without `final_url` counts with the URL it names (A1), and two markers listed twice were removed (E6). The classification is unchanged, and so is the chain apart from the pause. v0.2.1 was checked with the unit tests and the replay, whose output is identical to v0.2.0; no new live check.
-- **v0.2.2:** Two fixes from a third external code review: URLs that differ only in the trailing `/` get the TinyFish result that names them (A1), and a policy block of unexpected shape still blocks instead of raising (S6, S7). Both faults were reproduced before the fix and are covered by unit tests now; the replay output is identical to v0.2.0.
-- **v0.2.3:** Hardening from a fourth and a fifth external code review: a URL whose policy check raises is blocked (S7, D19), only a code of TinyFish reaches the log (A1, L1), an entry that is no string fails alone (S6), and redirects are explicitly not followed (A5). One marker rule changed (E6): `zustimmung` no longer counts inside `Cookie-Zustimmung`. On the 727 stored texts of the chain test, the live check and the search test this changes no classification, and the replay output is identical to v0.2.0. Before the release, v0.2.0 and v0.2.3 were run side by side on the same simulated provider replies (fetchers, provider, chain) and the tests of v0.2.0 were run against v0.2.3; every difference is an entry of the changelog.
-- **v0.2.4:** From a sixth and a seventh external code review: a TinyFish reply entry that is no object is skipped instead of failing the whole request, a reply that is no JSON object gives `malformed` (A1, A3), the pause table holds a digest instead of the key (K7), and a key is redacted in any case and percent-encoded (A4). Checked with the unit tests, the replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
-- **v0.2.5:** Bot-check pages (E7) and very short pages (E8) get classes of their own, the chain asks Firecrawl for a second opinion on a short TinyFish page (K2, K3), and a redirect is noted (V10). Checked with the unit tests and with stored data (section *v0.2.5: stored data*); unlike the releases before, the classification does change results.
+- **v0.1.0:** T2 and T3, on 2026-10-09.
+- **v0.2.0:** unit tests, replay and a live smoke test (*Edge-case review*).
+- **v0.2.1, v0.2.2:** unit tests and replay (output identical to v0.2.0); no new live check. The pause (K7, v0.2.1) was checked with unit tests and a test clock only, because no real 402 was available.
+- **v0.2.3:** unit tests and replay (output identical to v0.2.0); the one marker change (E6) alters no classification of the 727 stored texts of the chain test, the live check and the search test. v0.2.0 and v0.2.3 were run side by side on the same simulated provider replies (fetchers, provider, chain), and the tests of v0.2.0 were run against v0.2.3; every difference is an entry of the changelog.
+- **v0.2.4:** unit tests, replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
+- **v0.2.5:** unit tests and stored data (section *v0.2.5: stored data*). Unlike the releases before, the classification changes results.
 
 ## T1 – Unit tests
 
-`uv run pytest`: all tests pass without network access, locally (Python 3.14) and in CI (Python 3.11 and 3.14). `ruff check` and `ruff format --check` are clean.
+`uv run pytest`: all tests pass without network access, locally (Python 3.14) and in CI (Python 3.11 and 3.14).
 
 ## T2 – Replay on the chain-test data
 
@@ -24,20 +23,7 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
 
 - **Articles:** 14 free, 8 paywalled, 1 live blog (not rated).
 - **Completeness:** "complete" means the article's closing sentence, determined by hand, appears in the text.
-- **Results across all six providers:**
-
-| Provider | Free articles complete (of 14) | Notes |
-|---|---|---|
-| TinyFish | 8 | blocked by consent walls, `bot_blocked` on stern.de |
-| Firecrawl | 10 | whole pages including navigation and footer |
-| Keenable | 10 (+1 outdated) | solves consent walls; index copies can be older |
-| Parallel | 8 (+1 outdated) | first 600 characters only on three sites |
-| Exa | 10 (+1 outdated) | omits failed URLs silently |
-| Tavily | 9 | fails on consent walls |
-| **All six together** | **13** | |
-| **This chain** | **13** | |
-
-No provider got past any paywall.
+- **Results per provider:** [evaluation.md, Test 2](evaluation.md#test-2--chain-test-consent-walls-and-paywalls). The chain reached 13 of 14 free articles, as many as all six providers together. No provider got past any paywall.
 
 ### Replay
 
@@ -126,67 +112,7 @@ No provider got past any paywall.
 
 ### Results per URL
 
-- "Path" is the plugin's log line. The live run used v0.1.0, which logged Firecrawl and Keenable errors as `error`; v0.2.0 shows codes (L1).
-- "Chars" is the length of the content as the model sees it, notes included. The test profile had `web.extract_char_limit: 30000`; Hermes' default is 15,000.
-- "s" is the duration of the `web_extract` call. `(g1)` and `(g2)` are the two 3-URL calls.
-- "?" means unclear, "–" not applicable.
-
-| ID | Host | Paywall | Path (L1) | Chars | s | Assessment |
-|---|---|---|---|---|---|---|
-| golem1 | golem.de | no | `tinyfish=wall keenable=ok` | 3761 | 5.6 | complete (closing sentence) |
-| golem-alt | golem.de | no | `tinyfish=wall keenable=ok` | 3818 | 2.7 | complete (closing sentence) |
-| golemplus1 | golem.de | yes | `tinyfish=wall keenable=ok` | 647 | 3.3 | teaser (index copy), no paywall note |
-| heise1 | heise.de | no | `tinyfish=ok` | 3117 | 2.2 | complete (closing sentence) |
-| spiegel1 | spiegel.de | no | `tinyfish=ok` | 3163 | 4.4 | complete (closing sentence) |
-| zeit1 | zeit.de | no | `tinyfish=target_http_error firecrawl=error keenable=error` | 0 | 11.6 | error: all three refused access |
-| faz1 | faz.net | no | `tinyfish=target_http_error firecrawl=ok` | 28381 | 16.1 | complete (closing sentence) |
-| sz1 | sueddeutsche.de | no | `tinyfish=ok` | 2229 | 1.4 | complete (closing sentence) |
-| tonline1 | t-online.de | no | `tinyfish=ok` | 5718 | 1.6 | complete (closing sentence) |
-| welt1 | welt.de | no | `tinyfish=ok` | 5221 | 4.9 | live blog, not rated (as in the chain test) |
-| ntv1 | n-tv.de | no | `tinyfish=ok` | 3206 | 1.2 | complete (closing sentence) |
-| stern1 | stern.de | no | `tinyfish=bot_blocked firecrawl=ok` | 19416 | 2.9 | complete (closing sentence) |
-| standard1 | derstandard.at | no | `tinyfish=wall keenable=ok` | 2197 | 2.4 | complete (closing sentence) |
-| tagesschau1 | tagesschau.de | no | `tinyfish=ok` | 3720 | 2.9 | complete (closing sentence) |
-| netzpolitik1 | netzpolitik.org | no | `tinyfish=ok` | 8120 | 2.9 | complete (closing sentence) |
-| spiegelplus1 | spiegel.de | yes | `tinyfish=paywall` | 1203 | 2.4 | teaser with paywall note |
-| fazplus1 | faz.net | yes | `tinyfish=ok` | 1953 | 12.6 | teaser, no note (D5) |
-| weltplus1 | welt.de | yes | `tinyfish=ok` | 268 | 1.7 | teaser, no note (D5) |
-| sz-plus1 | sueddeutsche.de | yes | `tinyfish=ok` | 1094 | 2.8 | teaser, no note (D5) |
-| heiseplus1 | heise.de | yes | `tinyfish=paywall` | 828 | 2.2 | teaser with paywall note |
-| metered1 | metered news site | yes | `tinyfish=wall keenable=error` | 2827 | 14.7 | teaser with wall note and Keenable paywall message |
-| metered2 | metered news site | yes | `tinyfish=wall keenable=error` | 2827 | 17.4 | teaser with wall note and Keenable paywall message |
-| metered3 | metered news site | no | `tinyfish=ok` | 5573 | 11.9 | complete (closing sentence) |
-| n-spiegel1 (g1) | spiegel.de | no | `tinyfish=ok` | 2066 | 19.9 | complete (end of text inspected) |
-| n-faz3 (g1) | faz.net | no | `tinyfish=target_http_error firecrawl=ok` | 30341 | 19.9 | complete (end of text inspected); end lies in the untruncated head |
-| n-sz3 (g1) | sueddeutsche.de | no | `tinyfish=ok` | 2695 | 19.9 | complete (closing sentence) |
-| n-spiegel2 | spiegel.de | yes | `tinyfish=paywall` | 1116 | 2.3 | teaser with paywall note |
-| n-spiegel3 | spiegel.de | yes | `tinyfish=paywall` | 1234 | 1.7 | teaser with paywall note |
-| n-faz1 | faz.net | yes | `tinyfish=target_http_error firecrawl=ok` | 28251 | 13.0 | teaser, no note (D5) |
-| n-faz2 | faz.net | yes | `tinyfish=ok` | 2906 | 14.5 | teaser, no note (D5) |
-| n-sz1 | sueddeutsche.de | yes | `tinyfish=ok` | 859 | 2.8 | teaser, no note (D5) |
-| n-sz2 | sueddeutsche.de | yes | `tinyfish=ok` | 975 | 17.9 | teaser, no note (D5) |
-| n-tsp1 | tagesspiegel.de | yes | `tinyfish=ok` | 714 | 1.7 | teaser, no note (D5) |
-| n-hb1 | handelsblatt.com | yes | `tinyfish=ok` | 1204 | 4.7 | teaser, no note (D5) |
-| n-hb2 | handelsblatt.com | yes | `tinyfish=ok` | 1506 | 3.3 | teaser, no note (D5) |
-| n-hb3 (g2) | handelsblatt.com | no | `tinyfish=ok` | 1354 | 4.5 | complete (closing sentence) |
-| n-ntv1 (g2) | n-tv.de | no | `tinyfish=ok` | 2350 | 4.5 | complete (end of text inspected) |
-| n-tagesschau1 (g2) | tagesschau.de | no | `tinyfish=ok` | 7209 | 4.5 | complete (end of text inspected) |
-| n-zeit1 | zeit.de | ? | `tinyfish=target_http_error firecrawl=error keenable=ok` | 1725 | 9.1 | index copy, probably a Z+ teaser |
-| n-zeit2 | zeit.de | ? | `tinyfish=target_http_error firecrawl=error keenable=ok` | 1649 | 9.3 | index copy, probably a Z+ teaser |
-| n-ntv2 | n-tv.de | no | `tinyfish=ok` | 5701 | 1.4 | complete (closing sentence) |
-| n-zdf1 | zdfheute.de | no | `tinyfish=ok` | 4876 | 2.6 | complete (closing sentence) |
-| n-zdf2 | zdfheute.de | no | `tinyfish=ok` | 6375 | 4.1 | complete (closing sentence) |
-| n-netz1 | netzpolitik.org | no | `tinyfish=ok` | 9415 | 2.5 | complete (end of text inspected) |
-| n-netz2 | netzpolitik.org | no | `tinyfish=ok` | 7905 | 2.8 | complete (end of text inspected) |
-| n-std1 | derstandard.at | no | `tinyfish=wall keenable=ok` | 7226 | 2.2 | complete (end of text inspected) |
-| n-golem1 | golem.de | no | `tinyfish=wall keenable=ok` | 3640 | 2.6 | complete (end of text inspected) |
-| n-golem2 | golem.de | no | `tinyfish=wall keenable=ok` | 3919 | 4.0 | complete (end of text inspected) |
-| n-heise1 | heise.de | no | `tinyfish=ok` | 2035 | 2.0 | complete (closing sentence), with code formatting |
-| n-br1 | br.de | no | `tinyfish=ok` | 5233 | 2.3 | complete (end of text inspected); collected closing sentence absent (likely from the audio teaser) |
-| n-welt1 | welt.de | ? | `tinyfish=ok` | 7069 | 1.6 | complete (end of text inspected) |
-| n-so1 | stackoverflow.com | – | `tinyfish=bot_blocked firecrawl=ok` | 30186 | 5.3 | question and answers (whole page, truncated by Hermes) |
-| n-notfound1 | tagesschau.de | – | `tinyfish=page_not_found` | 0 | 1.9 | correct: `page_not_found`, no fallback |
-| n-docs1 | docs.python.org | – | `tinyfish=ok` | 30382 | 2.6 | complete (truncated by Hermes) |
+[`data/live-check/results.csv`](../data/live-check/results.csv) has one row per URL: paywall status, the plugin's log line (the live run used v0.1.0, which logged Firecrawl and Keenable errors as `error`; v0.2.0 shows codes, L1), the length of the content as the model sees it, the duration and the assessment. The test profile had `web.extract_char_limit: 30000`; Hermes' default is 15,000.
 
 ## T4 – Review against the design
 
@@ -197,28 +123,16 @@ An independent review checked code, tests and this file against every requiremen
 - **Key protection (S3):** a key echoed in a provider's error text is replaced by `[key]`.
 - **T3:** per-URL table and the note on the test profile's character limit.
 
-Left open on purpose:
-
-- A non-dict item in TinyFish's `results` fails the whole batch (it then goes to Firecrawl); harmless. (Closed after v0.2.3: such an entry is skipped, and only its URL is left without a result.)
-- Duplicates share one `metadata` object; Hermes drops `metadata` anyway. (Closed in v0.2.1: every duplicate is an entry of its own.)
-- No concurrency limit for Firecrawl (K6).
+Left open on purpose: no concurrency limit for Firecrawl (K6, D16).
 
 ## Edge-case review (v0.2.0, 2026-10-10)
 
-The review covered failure modes and costs: Hermes' extract path, plugin loading and installation, and the providers' documented failure behaviour. Findings and changes:
+The review covered failure modes and costs: Hermes' extract path, plugin loading and installation, and the providers' documented failure behaviour. Findings, fixed in v0.2.0 (D13, [CHANGELOG.md](../CHANGELOG.md)):
 
-- **Website blocklist (S7):** Hermes leaves `check_website_access` to each provider; only its built-in Firecrawl provider calls it. v0.1.0 therefore bypassed the blocklist. v0.2.0 checks every input URL before any request and the final URL after redirects.
-- **Interrupts (S8):** v0.1.0 kept fetching after the user stopped the turn. v0.2.0 checks `is_interrupted()` before TinyFish and before each further stage.
-- **PDF credits (A2, V7):** Firecrawl bills one credit per PDF page, so one long PDF that TinyFish cannot fetch could cost hundreds of credits. v0.2.0 sends `parsers: [{"type": "pdf", "maxPages": 30}]` and adds a note when the PDF was cut.
-  - Verified live once: an arXiv PDF with `maxPages: 2` returned `numPages: 2`, `totalPages: 15` and `creditsUsed: 2`.
-- **Batches over 10 URLs (A1):** TinyFish rejects more than 10 URLs per request. Hermes' tool passes at most 5, but other callers might pass more; v0.2.0 splits them.
-- **Diagnosis (L1):** error codes per stage (`http_402`, `api_402`, `target_403`, …) instead of a bare `error`. Quota and key problems are thus visible in `agent.log`; see [troubleshooting.md](troubleshooting.md).
-- **Rules on non-news pages:** the 554 TinyFish texts of an earlier search test (software documentation, forums and Q&A sites, mostly English) produce no wall or paywall classification.
-- **Remaining by design:** see [troubleshooting.md](troubleshooting.md), *Edge cases*. Keyword rules can fire on articles *about* paywalls or cookie consent; teasers without markers stay undetected.
-
-## T5 – CI
-
-GitHub Actions (`ci.yml`) runs `ruff check`, `ruff format --check` and `pytest` on Python 3.11 and 3.14 for every push. The first green run was on 2026-10-09.
+- v0.1.0 bypassed the website blocklist (S7) and kept fetching after the user stopped the turn (S8).
+- One long PDF that TinyFish cannot fetch could cost hundreds of Firecrawl credits (A2, V7). Verified live once: an arXiv PDF with `maxPages: 2` returned `numPages: 2`, `totalPages: 15` and `creditsUsed: 2`.
+- Rules on non-news pages: the 554 TinyFish texts of an earlier search test (software documentation, forums and Q&A sites, mostly English) produce no wall or paywall classification.
+- Remaining by design: [design.md, section 13](design.md#13-known-limitations).
 
 ## v0.2.5: stored data
 

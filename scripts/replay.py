@@ -1,5 +1,7 @@
 """T2: replay the chain on stored raw results of the chain test of 2026-10-09 (no network, no Hermes).
 
+Maintainer only: needs the raw article texts, which are not published.
+
     uv run python scripts/replay.py RAW_JSONL PROTOTYPE CLOSING
 
 RAW_JSONL  raw results of the chain test (not published, contains article texts): one JSON line per article with
