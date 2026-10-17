@@ -33,3 +33,10 @@ Nicht an die Modelle: `docs/` (Konsistenz Doku ↔ Code prüfe ich selbst), `scr
 
 - Die Prompts nennen die in `docs/design.md` dokumentierten bewussten Entscheidungen (D16–D18, D10 usw.) als „nicht melden“, damit die Modelle nicht bekannte Ablehnungen wiederholen. So verlangt es auch der Auftrag (nicht neu aufrollen).
 - Prompts auf Deutsch, Code und Kommentare sind Englisch.
+
+## Änderungen im Ablauf während der Nacht
+
+- **00:45** Big Pickle hat im ersten Durchgang (Bereich `chain`) per `cat .opinion/deepseek-…md .opinion/space-bunny-free.md` die Antworten der Vorgänger gelesen (nachgewiesen in der opencode-Sitzungsdatenbank). Außerdem lesen die Modelle den Arbeitsbaum des Repos (also auch schon umgesetzte Fixes) und führen Befehle wie `pytest` aus. Ab hier wird jedes Modell einzeln aufgerufen (`OPINION_MODELS=<modell> OPINION_POOL=" " OPINION_COUNT=1`), dadurch leert das Skript `.opinion/` vor jedem Modell. Bereits erhaltene Antworten liegen während der Läufe außerhalb des Repos. Als Anhang dienen die Originaldateien von `main` (`c9d5739`). Die kontaminierte Big-Pickle-Antwort ist als `big-pickle_kontaminiert.md` abgelegt und zählt nicht.
+- **00:45** `OPINION_TIMEOUT=900` statt 400, weil mehrere Modelle (Longcat, Big Pickle, GLM, MiMo) mit Werkzeugaufrufen und langem Nachdenken über 400 s brauchten.
+- **01:25** Die Prompts enthalten zusätzlich die Zeile „Arbeitsweise: Prüfe ausschließlich die angehängten Dateien …“. GLM (49.000 Token Nachdenken) und MiMo (14 Werkzeugaufrufe) liefen auch in 900 s in den Timeout.
+- Nicht mehr verfügbar beim Anbieter: `muse-spark-1.3-contributor-free`, `cat-jam-free`, `ll-alpha-free` („Model not found“). Neu verfügbar und zusätzlich gefragt: `beam-free`. Nemotron-Modelle sind verfügbar, laut `CLAUDE.md` aber nicht zu nutzen.

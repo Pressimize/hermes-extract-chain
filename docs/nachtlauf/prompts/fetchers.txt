@@ -25,3 +25,5 @@ Für jeden Befund:
 - Kurzer Vorschlag zur Behebung
 
 Wichtig: Keine Vermutungen ohne Codebezug. Nur Befunde, die du an einer konkreten Codezeile festmachen kannst. Lieber weniger und belastbar als viele und spekulativ. Sortiere nach Schwere, den wichtigsten zuerst. Antworte auf Deutsch, knapp.
+
+Arbeitsweise: Prüfe ausschließlich die angehängten Dateien. Lies keine weiteren Dateien, öffne keine anderen Verzeichnisse und führe keine Befehle aus; die Anhänge genügen. Antworte direkt.

@@ -22,3 +22,11 @@ Vom Skript geschrieben, zaehlt fuer die Rotation mit.
 | big-pickle | 2026-10-17 | Timeout | 400s |
 | ll-alpha-free | 2026-10-17 | Fehler rc=1 | 5s |
 | muse-spark-1.3-contributor-free | 2026-10-17 | Fehler rc=1 | 5s |
+| cat-jam-free | 2026-10-17 | Fehler rc=1 | 5s |
+| glm-5.3-flash-free | 2026-10-17 | Timeout | 400s |
+| mimo-v2.6-flash-free | 2026-10-17 | Timeout | 400s |
+| longcat-2.5-preview-free | 2026-10-17 | Timeout | 400s |
+| ll-alpha-free | 2026-10-17 | Fehler rc=1 | 5s |
+| muse-spark-1.3-contributor-free | 2026-10-17 | Fehler rc=1 | 5s |
+| glm-5.3-flash-free | 2026-10-17 | Timeout | 900s |
+| mimo-v2.6-flash-free | 2026-10-17 | Timeout | 901s |
