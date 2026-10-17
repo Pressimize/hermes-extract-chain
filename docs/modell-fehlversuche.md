@@ -38,3 +38,9 @@ Vom Skript geschrieben, zaehlt fuer die Rotation mit.
 | mimo-v2.6-flash-free | 2026-10-17 | Timeout | 900s |
 | big-pickle | 2026-10-17 | Timeout | 900s |
 | longcat-2.5-preview-free | 2026-10-17 | Fehler rc=0 | 606s |
+| deepseek-v4.1-flash-free | 2026-10-17 | Rate-Limit | 11s |
+| big-pickle | 2026-10-17 | Timeout | 900s |
+| longcat-2.5-preview-free | 2026-10-17 | Fehler rc=0 | 630s |
+| space-bunny-free | 2026-10-17 | Rate-Limit | 5s |
+| mimo-v2.6-flash-free | 2026-10-17 | Timeout | 901s |
+| longcat-2.5-preview-free | 2026-10-17 | Fehler rc=0 | 470s |

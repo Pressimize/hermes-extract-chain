@@ -8,13 +8,15 @@ Urteile: **bestätigt** (nachvollzogen und reproduziert), **abgelehnt** (mit Gru
 
 | ID | Kategorie | Fundstelle | Modelle | Urteil und Beleg | Commit |
 |---|---|---|---|---|---|
-| N01 | Bug + Performance | `extract_chain/chain.py:68` (`_TAGS = <[^>]*>`) | eigen, DS, BP¹ | **bestätigt.** Das Muster entfernt alles zwischen einem `<` im Text und dem nächsten `>`. Ein Artikel von 3.270 Zeichen mit `x < 10` und später `->` hatte 10 sichtbare Zeichen und galt als `empty`; ein Python-Text mit `` `a < b` `` und `>>> 1 < 2` galt als `thin`. Folge: TinyFishs vollständiger Text wird verworfen, Firecrawl (1 Credit) und ggf. Keenable werden gefragt, schlimmstenfalls kommt ein Fehler. Außerdem quadratisch bei vielen `<` ohne `>`: 320 kB → 13 s CPU, in der Event-Loop, also für alle URLs des Aufrufs. Fix: Ein Tag beginnt mit Buchstabe, `/` oder `!` und enthält kein weiteres `<`. Tests `test_less_than_sign_is_no_tag`, `test_many_less_than_signs_classify_in_linear_time` (vorher rot, jetzt grün). | `3fc5a0e` |
+| N01 | Bug + Performance | `extract_chain/chain.py:68` (`_TAGS = <[^>]*>`) | eigen, DS, MM², BP¹ | **bestätigt.** Das Muster entfernt alles zwischen einem `<` im Text und dem nächsten `>`. Ein Artikel von 3.270 Zeichen mit `x < 10` und später `->` hatte 10 sichtbare Zeichen und galt als `empty`; ein Python-Text mit `` `a < b` `` und `>>> 1 < 2` galt als `thin`. Folge: TinyFishs vollständiger Text wird verworfen, Firecrawl (1 Credit) und ggf. Keenable werden gefragt, schlimmstenfalls kommt ein Fehler. Außerdem quadratisch bei vielen `<` ohne `>`: 320 kB → 13 s CPU, in der Event-Loop, also für alle URLs des Aufrufs. Fix: Ein Tag beginnt mit Buchstabe, `/` oder `!` und enthält kein weiteres `<`. Tests `test_less_than_sign_is_no_tag`, `test_many_less_than_signs_classify_in_linear_time` (vorher rot, jetzt grün). | `3fc5a0e` |
 | N02 | Robustheit | `extract_chain/fetchers.py:153-154` | SB, DS | **bestätigt.** `{"success": true, "data": "x"}` oder `metadata: "nope"` ergibt `Firecrawl: AttributeError` mit Code `AttributeError` statt des dokumentierten `malformed` (TinyFish und Keenable melden seit 0.2.4 `malformed`). Das Ergebnis war schon vorher ein Fehler; nur Text und Logcode ändern sich. Test `test_firecrawl_data_that_is_no_object_is_malformed`. | `4b16542` |
 | N03 | Doku | `docs/troubleshooting.md:145` | eigen | **bestätigt.** Die Edge-Case-Tabelle sagte, eine Seite mit „Access denied“ oder Challenge-Text werde nicht erkannt. Seit 0.2.5 (E7) wird sie unter 1.500 sichtbaren Zeichen als Bot-Check erkannt. Text angepasst. | `e59b4c6` |
 | N04 | Bug (Entwicklerskript) | `scripts/replay.py:41-45` | SB, DS, GLM, MM | **bestätigt.** Ein gespeicherter Fehler wie `Keenable fetch failed: 402` oder `… null` ist gültiges JSON, aber kein Objekt; `body.get` wirft `AttributeError`, das Replay bricht ab, bevor die Tabelle gedruckt wird. Reproduziert. Test `test_replay_error_detail`. | `5cb77d1` |
 | N05 | Bug (Entwicklerskript) | `scripts/live_check.py:104-109` | eigen, SB, DS, GLM, MM, LC | **bestätigt.** L1-Zeilen nennen nur den Host. Bei zwei URLs desselben Hosts in einem Aufruf überschreibt die letzte Zeile die erste: Eine TinyFish-Antwort wurde gegen die Keenable-Zeile der anderen URL geprüft und als „Keenable result without note“ gemeldet (alte Logik nachgestellt: Fehlalarm `a`), oder eine wirklich fehlende Note fiel nicht auf. Fix: URLs desselben Hosts werden gemeinsam geprüft (Anzahl Ergebnisse mit Note ≥ Anzahl Zeilen mit Keenable-Ergebnis); die Prüfung steckt jetzt in `check_call()`. Tests `test_live_check_*`. | `6dfcd9a` |
 
-¹ Big Pickles erste `chain`-Antwort hatte die Antworten von SB und DS gelesen und den bereits umgesetzten Fix im Arbeitsbaum gesehen; sie zählt nicht als unabhängige Bestätigung.
+¹ Big Pickles erste `chain`-Antwort hatte die Antworten von SB und DS gelesen und den bereits umgesetzten Fix im Arbeitsbaum gesehen; sie zählt nicht als unabhängige Bestätigung. Die isoliert nachgeholte Big-Pickle-Antwort findet N01 nicht.
+
+² In der isolierten Nachholung (siehe unten). Die nachgeholte DeepSeek-Antwort findet N01 diesmal nicht.
 
 ## Vorschläge, die Andres Entscheidung brauchen
 
@@ -30,7 +32,7 @@ Gruppiert nach Grund. Jede Zeile ist ein zusammengeführter Befund; in Klammern 
 |---|---|---|---|
 | A01 | Wall-/Paywall-Marker im Roh-Text statt im sichtbaren Text suchen; `WHOLE_BELOW`/`WALL_WINDOW` messen Roh-Zeichen (`chain.py:96-100`) | SB, BP, GLM | E3 legt ausdrücklich „raw `content` (Markdown or HTML, uncleaned)“ fest. Die Anbieter liefern Markdown (A1–A3, S4); die konstruierten Beispiele mit `<script id="consent-manager">` setzen Roh-HTML voraus, das keiner der drei Dienste so liefert. |
 | A02 | Ein einziger Bot-Check-Marker unter 1.500 Zeichen reicht für `challenge`; ein echter Kurzartikel über Captchas bekommt V11 (`chain.py:94`) | SB, BP | E7, D21, D25 und „Known limitations“ beschreiben genau diesen Zielkonflikt; deshalb wird die Seite mit V11 trotzdem zurückgegeben. |
-| A03 | Redirect-Hinweis bei jedem Host-Wechsel (`m.`-Subdomain) und jedem zweibuchstabigen Pfadsegment (`/in/`, `/it/`) (`chain.py:111-118`) | SB, BP, GLM | V10 spezifiziert genau diese Regeln; ein Hinweis ändert weder Klasse noch Kette (D22). |
+| A03 | Redirect-Hinweis bei jedem Host-Wechsel (`m.`-Subdomain) und jedem zweibuchstabigen Pfadsegment (`/in/`, `/it/`); kein Hinweis bei anderem Port oder bei einem anderen, nicht leeren Pfad (`chain.py:111-118`) | SB, BP, GLM, MM | V10 spezifiziert genau diese Regeln; ein Hinweis ändert weder Klasse noch Kette (D22). |
 | A04 | Redirect-Hinweis enthält die volle End-URL samt Query (mögliches Token im Modellkontext) (`chain.py:127`, `fetchers.py:121`) | SB, DS, BP | V10 bewusst: Das Modell soll sehen, wohin weitergeleitet wurde. Die Logzeile (L1) ist der Ort, an dem URLs bewusst fehlen; Hermes weist URLs mit Geheimnissen vor jedem Abruf ab. |
 | A05 | Pause springt um 00:05:00 UTC von Sekunden auf 24 h (`provider.py:57`) | SB | K7: Ein 402 nach 00:05 bedeutet, dass das neue Tageskontingent verbraucht ist; die fünf Minuten decken nur Uhrabweichungen. |
 | A06 | `register()` fängt `ImportError` der Basisklasse nicht ab (`__init__.py:6`) | SB | In „Known limitations“ beschrieben: ohne `agent.web_search_provider` lädt das Plugin nicht. |
@@ -39,6 +41,9 @@ Gruppiert nach Grund. Jede Zeile ist ein zusammengeführter Befund; in Klammern 
 | A09 | Einzel-URL-Fallback ordnet eine Antwort mit anderer URL (auch ein `errors`-Eintrag oder einer ohne `url`) der angefragten URL zu (`fetchers.py:129-130`) | SB, DS, GLM, BP | A1 ausdrücklich (Redirects bei einer einzelnen URL). |
 | A10 | Bei einer URL in `results` und `errors` gewinnt immer der Fehler; Antwort ohne `results`/`errors` wird `no_result` statt `malformed`; Batch-Redirect ergibt `no_result` (`fetchers.py:107-135`) | GLM, BP, LC | A1 („errors[] after results[]“, „a results or errors that is no list counts as empty“) und troubleshooting.md („Redirect inside a multi-URL batch“). |
 | A11 | TinyFish-Code über 40 Zeichen wird `fetch_failed`; Transportcodes sind Klassennamen in CamelCase (`fetchers.py:40, 57-60`) | GLM | A1 und L1 dokumentiert. |
+| A13 | Eine Consent-Wall von Keenable wird nicht als Wall-Seite behalten; eine frühere Bot-Check-Seite gewinnt (`chain.py:208-217`) | DS | K4: Bei Keenable zählt alles außer `ok`, `paywall`, `thin` nur als Grund; behalten werden nur Wall- und Bot-Check-Seiten der Live-Stufen. |
+| A14 | `/stop` bricht laufende Anfragen nicht ab (`provider.py:124, 172-173`) | SB | S8: best effort, laufende Anfragen enden spätestens mit ihrer Frist (A0). |
+| A15 | Lange Bot-Check-Seiten (über 1.500 Zeichen) gelten als `ok` (`chain.py:94`) | BP | E7 und „Known limitations“. |
 | A12 | Ausnahmemeldung statt nur Klassenname in `extract-chain: <Klasse>` (`chain.py:219-221`) | BE | S6 bewusst: Die Meldung kann URL oder Seiteninhalt enthalten. |
 
 ### B. Hypothetisch: Eingaben, die weder Hermes noch die Anbieter liefern
@@ -55,6 +60,7 @@ Gruppiert nach Grund. Jede Zeile ist ein zusammengeführter Befund; in Klammern 
 | B08 | Fallback ohne `tools.interrupt` bleibt still (`provider.py:42-45`) | SB | Das Modul existiert in Hermes ≥ 0.21; S8 ist ausdrücklich „best effort“. |
 | B09 | `KeyError` bei 402-Dokumenten ohne `error`/`code`, Lücke in `done` (`provider.py:133, 191-192`) | DS, BP, BE | Invarianten heute garantiert (`fetchers._error`, `zip(..., strict=True)`). |
 | B10 | Skripte: JSON-Antwort von `web_extract_tool` kein String, `null`-Einträge, leere/fehlerhafte Zeilen in Rohdaten, leere Schlusssatz-Listen, `AnnAssign`, Zero-Width-Zeichen, Logzeile ohne Host (`live_check.py`, `replay.py`) | DS, GLM, MM, LC, BP, BE | `web_extract_tool` ist als `-> str` deklariert (Hermes `tools/web_tools.py:392`); jede Plugin-Zeile mit Präfix `extract-chain ` enthält einen Host; die Replay-Daten sind fest und liefen bereits (validation.md). |
+| B12 | Relative oder leere `final_url` landet in `metadata.finalURL`; leere Strings als URL (`chain.py:133-134`, `provider.py:121`) | BP, SB | Die Dienste liefern absolute End-URLs; Hermes prüft Eingabe-URLs vor dem Anbieter (`_validate_extract_urls`). |
 | B11 | Leere URL-Liste an TinyFish; Duplikate über Batch-Grenzen (`fetchers.py:89-93`) | DS, GLM | `provider.extract` dedupliziert und ruft die Kette nur mit nicht leerer Liste auf. |
 
 ### C. Sachlich falsch
@@ -65,6 +71,8 @@ Gruppiert nach Grund. Jede Zeile ist ein zusammengeführter Befund; in Klammern 
 | C02 | `_json` fängt `UnicodeDecodeError` nicht (`fetchers.py:64-67`) | BE | `UnicodeDecodeError` ist eine Unterklasse von `ValueError` (geprüft). |
 | C03 | Pausengrund und Logcode könnten Keys enthalten (`provider.py:191-192`) | BP, BE | Der Grund ist der bereits geschwärzte, einzeilige Fehlertext aus `fetchers._error`; Codes stammen aus einer festen Menge bzw. `_CODE`. Auch der Keenable-JSON-Fehlerpfad schwärzt (nachgeprüft). |
 | C04 | `record.getMessage()` verfälsche das Präfix; Keenable `ok` mit leerem Inhalt; Fehler mehrzeilig in Hinweisen (`live_check.py:53, 108`, `chain.py:150-153`) | LC, BP, GLM | `getMessage()` liefert genau die formatierte Zeile, die der Filter braucht; `ok` heißt nicht leer und trägt V4; Anbieterfehler sind nach A4 einzeilig und gekürzt. |
+| C06 | `httpx.AsyncClient` ohne `timeout=` nutze den Standard von 5 s für alle Stufen (`provider.py:138`) | SB | `fetchers._request` gibt jeder Anfrage `timeout=deadline` mit (`fetchers.py:73`), das überschreibt den Client-Standard; dazu die harte Frist per `asyncio.timeout`. |
+| C07 | Basisklassen-Vertrag verletzt: kein `super().__init__()`, `name` als Property (`provider.py:92-105`) | SB | Hermes v0.21.6 `agent/provider_base.py:19-31` definiert `name` und `display_name` selbst als Properties und hat keinen eigenen `__init__`. |
 | C05 | `_left(3600)` ergebe fälschlich „60 min“ (`provider.py:67`) | DS, BE | 60 min ist korrekt; nur die Grenze „unter einer Stunde“ ist Geschmackssache. Kein Fehlverhalten. |
 
 ### D. Performance ohne messbare Wirkung
@@ -73,7 +81,7 @@ Gruppiert nach Grund. Jede Zeile ist ein zusammengeführter Befund; in Klammern 
 |---|---|---|---|
 | D01 | `_redact` und `" ".join(text.split())` über Megabyte-Fehlerseiten (`fetchers.py:43-53`) | SB, DS, LC, BE | Gemessen: 4 MB → 0,3–0,7 s, linear; bewusst getestet (`test_megabyte_error_page_gives_a_short_error`). Vorab kürzen könnte einen Key an der Schnittkante teilen. |
 | D02 | `_visible` wird je URL mehrfach berechnet (`chain.py:91, 152, 197-202`) | SB, DS, BP, BE | Nach N01 linear; D18 misst 13 ms je 100.000 Zeichen. |
-| D03 | `deepcopy` jedes Eintrags (`provider.py:133`) | SB, BP | `deepcopy` kopiert Strings nicht; S5 verlangt eigene Objekte je Position. |
+| D03 | `deepcopy` jedes Eintrags; `_paused` wächst mit jedem neuen Key (`provider.py:97, 133`) | SB, BP | `deepcopy` kopiert Strings nicht; S5 verlangt eigene Objekte je Position. |
 | D04 | O(n²)-Ratenfenster, Schlaf nach der letzten Gruppe, `raw` in `results.jsonl` (`live_check.py`) | BP, MM, SB | Entwicklerskript mit höchstens ~100 URLs; `raw` ist gewollt (Ausgabe, wie das Modell sie sieht). |
 
 ### E. Entwicklerskripte: gewollt oder ohne Fehlverhalten
@@ -91,12 +99,23 @@ Gruppiert nach Grund. Jede Zeile ist ein zusammengeführter Befund; in Klammern 
 
 Namen (`short`, `page`, `check`), Literale für Anbieternamen, ternärer Ausdruck als Iterable, wiederholte Zweizeiler, magische Slices in den Skripten, `if not 0 < left <= DAY`, Eindeutigkeitstest der Marker ohne `CHALLENGE` und ohne Regex-gegen-Regex-Vergleich (SB, DS, BP, GLM, BE, LC). Kein Fehlverhalten nachgewiesen; Änderungen wären Geschmack.
 
+## Nachholung (2026-10-17 morgens)
+
+Auf Andres Wunsch nachgeholt: die Läufe, in denen ein Modell fremde Antworten gesehen haben könnte, und die ohne Antwort.
+
+- **Mögliche Einsicht:** Big Pickle `chain` (sicher, hat sie per `cat` gelesen), DeepSeek `chain` (00:13; Space Bunnys Antwort lag in `.opinion/`, und es hat `git diff` auf den Branch mit der committeten `fetchers`-Antwort ausgeführt), Space Bunny `provider` (00:43; `grep -rn … docs/`, als `docs/nachtlauf/antworten/` noch im Repo lag). Alle anderen Sitzungen habe ich in der opencode-Datenbank auf Zugriffe auf `.opinion/*.md`, `antworten`, `git show`/`git diff` und den Scratchpad geprüft; ohne Treffer.
+- **Ohne Antwort:** MiMo `chain` und `provider`, Longcat `chain`, Big Pickle `chain`. Muse Spark, Cat Jam und LL Alpha gibt es beim Anbieter weiterhin nicht.
+- **Isolierung:** Die Läufe liefen in einem frischen Klon nur von `main` (`git clone --no-local --single-branch --branch main --no-tags`, Remote entfernt) im Scratchpad: keine `docs/nachtlauf/`, keine Fixes, keine anderen Branches in der Historie. Prompts lagen außerhalb des Klons, jede Antwort wurde sofort herauskopiert und `.opinion/` danach gelöscht.
+- **Ergebnis:** 10 Aufrufe, 4 Antworten: DeepSeek, Big Pickle und MiMo zu `chain`, Space Bunny zu `provider`. Dazu 2 Rate-Limits (beide wiederholt), 2 Timeouts (Big Pickle `chain` im ersten Versuch und MiMo `provider` im dritten Versuch, jeweils Strom ohne Token) und 2 leere Longcat-Läufe. Longcat schöpfte beim ersten Versuch das Limit von 32.000 Token fürs Nachdenken aus, ohne zu antworten; der zweite Versuch nur mit `chain.py` (Prompt `prompts/chainonly.txt`) blieb ebenfalls leer.
+- **Neue Befunde:** keine bestätigten. MiMo bestätigt N01 unabhängig. Neue Ablehnungen: A13–A15, B12, C06, C07 (oben eingeordnet).
+- Antworten: `antworten/<bereich>/<modell>_nachgeholt.md`.
+
 ## Unklar
 
 Keine.
 
 ## Zählung
 
-- Antworten mit Befunden: 24 (dazu eine leere von Longcat und eine nicht unabhängige von Big Pickle).
-- Einzelpunkte in diesen Antworten: rund 180; nach Zusammenführen 5 bestätigt (N01–N05; N01, N03 und N05 hatte ich auch selbst beim Lesen gefunden) und rund 40 abgelehnte Themen (A–F).
-- Bestätigt von mehreren Modellen unabhängig: N04 (4 Modelle), N05 (5 Modelle), N02 (3 Modelle). N01 fand nur DeepSeek unabhängig; GLM, Beam und Space Bunny übersahen ihn im selben Bereich.
+- Antworten mit Befunden: 28 (24 aus der Nacht, 4 aus der isolierten Nachholung; dazu eine leere von Longcat und eine nicht unabhängige von Big Pickle).
+- Einzelpunkte in diesen Antworten: rund 210; nach Zusammenführen 5 bestätigt (N01–N05; N01, N03 und N05 hatte ich auch selbst beim Lesen gefunden) und rund 40 abgelehnte Themen (A–F).
+- Bestätigt von mehreren Modellen unabhängig: N04 (4 Modelle), N05 (5 Modelle), N02 (3 Modelle). N01 fanden DeepSeek (erster Lauf) und MiMo (Nachholung) unabhängig; GLM, Beam, Space Bunny, Big Pickle (isoliert) und DeepSeek im zweiten Lauf übersahen ihn.

@@ -2,7 +2,7 @@
 
 ## Kurz und ohne Fachbegriffe
 
-Ich habe das Plugin über Nacht von sieben kostenlosen KI-Modellen prüfen lassen und jeden ihrer Hinweise selbst nachgeprüft. Von rund 180 Hinweisen hielten nur wenige stand; die meisten wiederholten bewusst getroffene Entscheidungen oder beschrieben Fälle, die in der Praxis nicht vorkommen.
+Ich habe das Plugin über Nacht von sieben kostenlosen KI-Modellen prüfen lassen und jeden ihrer Hinweise selbst nachgeprüft. Von rund 210 Hinweisen hielten nur wenige stand; die meisten wiederholten bewusst getroffene Entscheidungen oder beschrieben Fälle, die in der Praxis nicht vorkommen.
 
 **Behoben (5 Punkte):**
 
@@ -29,11 +29,11 @@ Die Punkte 4 und 5 betreffen nur Werkzeuge für Entwickler, nicht das ausgeliefe
 | Modelle mit Antwort | space-bunny-free, deepseek-v4.1-flash-free, glm-5.3-flash-free, mimo-v2.6-flash-free, longcat-2.5-preview-free, big-pickle, beam-free (neu, unbewertet) |
 | Nicht mehr verfügbar | muse-spark-1.3-contributor-free, cat-jam-free, ll-alpha-free („Model not found“) |
 | Bewusst nicht gefragt | Nemotron (laut `CLAUDE.md`) |
-| Aufrufe | 51 |
-| Antworten | 26, davon 24 verwertbar (eine leere von Longcat, eine nicht unabhängige von Big Pickle). Die leere Longcat-Antwort zu `provider` (drei Zwischensätze) wurde beim Speichern von der Wiederholung überschrieben. |
-| Rate-Limits | 3 (alle im ersten Durchgang, DeepSeek, GLM, MiMo); später keine mehr |
-| Timeouts | 13 (MiMo 6, Big Pickle 3, GLM 2, Longcat 2) |
-| Sonstige Fehler | 7× „Model not found“, 2× leere Ausgabe (Longcat) |
+| Aufrufe | 51 in der Nacht, 10 in der isolierten Nachholung am Morgen |
+| Antworten | Nacht: 26, davon 24 verwertbar (eine leere von Longcat, eine nicht unabhängige von Big Pickle). Die leere Longcat-Antwort zu `provider` (drei Zwischensätze) wurde beim Speichern von der Wiederholung überschrieben. Nachholung: 4, alle verwertbar. |
+| Rate-Limits | 3 im ersten Durchgang (DeepSeek, GLM, MiMo), 2 in der Nachholung (DeepSeek, Space Bunny; beide erfolgreich wiederholt) |
+| Timeouts | Nacht 13 (MiMo 6, Big Pickle 3, GLM 2, Longcat 2), Nachholung 2 (Big Pickle, MiMo) |
+| Sonstige Fehler | 7× „Model not found“, 4× leere Ausgabe (Longcat, davon einmal 32.000 Token Nachdenken ohne Antwort) |
 | Wiederholungen | eine Runde für alle Lücken; danach keine weitere |
 
 Abdeckung (✓ = verwertbare Antwort):
@@ -41,11 +41,11 @@ Abdeckung (✓ = verwertbare Antwort):
 | Bereich | SB | DS | GLM | MM | LC | BP | BE |
 |---|---|---|---|---|---|---|---|
 | fetchers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| chain | ✓ | ✓ | ✓ | – | – | (✓)¹ | ✓ |
-| provider | ✓ | ✓ | ✓ | – | ✓² | ✓ | ✓ |
+| chain | ✓ | ✓ ✓³ | ✓ | ✓³ | – | ✓³ | ✓ |
+| provider | ✓ ✓³ | ✓ | ✓ | – | ✓² | ✓ | ✓ |
 | scripts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-¹ nicht unabhängig, zählt nicht. ² erst in der Wiederholung.
+² erst in der Wiederholung. ³ isoliert nachgeholt (siehe unten); die frühere Big-Pickle-Antwort zu `chain` war nicht unabhängig und zählt nicht.
 
 **Änderungen am Ablauf während der Nacht** (Details in `plan.md`):
 
@@ -56,6 +56,14 @@ Abdeckung (✓ = verwertbare Antwort):
 **Phase 3.** Jeden Punkt am Code geprüft, Reproduktionen per Skript oder Test, zwei Behauptungen über Hermes am Quelltext von Hermes v0.21.6 überprüft (Website-Blocklist und Keyless-Rescue). Ergebnis in `befunde.md`.
 
 **Phase 4.** Fünf Fixes, je ein Commit mit Befund-ID, jeweils erst roter Test, dann Fix. Testsuite nachher: 187 bestanden (11 neue Tests), `ruff check` und `ruff format --check` sauber. Keine neuen Abhängigkeiten, Version unverändert (`CHANGELOG.md` hat einen Abschnitt „Unreleased“).
+
+## Nachholung am Morgen (isoliert)
+
+Nachgeholt habe ich die Läufe, in denen ein Modell fremde Antworten gesehen haben könnte (Big Pickle `chain` sicher, DeepSeek `chain` und Space Bunny `provider` möglich), und die Läufe ohne Antwort (MiMo `chain`/`provider`, Longcat `chain`, Big Pickle `chain`). Die Läufe fanden in einem frischen Klon nur von `main` statt, ohne `docs/nachtlauf/`, ohne Fixes und ohne andere Branches. Jede Antwort wurde sofort herauskopiert und `.opinion/` danach gelöscht.
+
+- 10 Aufrufe, 4 Antworten (DeepSeek, Big Pickle und MiMo zu `chain`, Space Bunny zu `provider`).
+- Weiterhin ohne Antwort: MiMo `provider` (dreimal Strom ohne Token) und Longcat `chain` (viermal leer, auch nur mit `chain.py` ohne Tests).
+- **Kein neuer bestätigter Befund.** MiMo fand N01 unabhängig; DeepSeek fand N01 im isolierten Lauf diesmal nicht, Big Pickle auch nicht. Zwei Behauptungen von Space Bunny sind sachlich falsch (`befunde.md`, C06, C07).
 
 ## Umgesetzte Fixes
 
@@ -75,7 +83,7 @@ Abdeckung (✓ = verwertbare Antwort):
 
 **Am Prüfwerkzeug `scripts/second-opinion.sh`** (nicht umgesetzt, weil das Skript nach Phase 0 nicht weiter bearbeitet werden sollte):
 
-1. **Modelle voneinander trennen.** Jedes Modell in einem eigenen Arbeitsordner laufen lassen (z. B. `.opinion/<modell>/` mit Kopie der Anhänge) oder Antworten erst nach dem Lauf nach `.opinion/` verschieben. Sonst kann ein Modell die Antworten der vorigen lesen; Big Pickle hat das getan.
+1. **Modelle voneinander trennen.** Jedes Modell in einem eigenen Arbeitsordner laufen lassen (z. B. `.opinion/<modell>/` mit Kopie der Anhänge) oder Antworten erst nach dem Lauf nach `.opinion/` verschieben. Sonst kann ein Modell die Antworten der vorigen lesen; Big Pickle hat das getan. In der Nachholung hat ein frischer Klon nur von `main` außerhalb des Arbeits-Repos gut funktioniert: Die Modelle sehen dort weder Antworten noch unfertige Änderungen.
 2. **Werkzeugzugriff begrenzen.** Die Modelle laufen als opencode-Agent „build“ mit Shell und Lesezugriff auf das ganze Repo. Entweder ein Agent ohne Werkzeuge (falls opencode das erlaubt) oder mindestens die Prompt-Zeile „Prüfe ausschließlich die angehängten Dateien …“ fest einbauen; mit ihr wurden die Antworten schneller und unabhängiger vom Arbeitsstand.
 3. **Rangfolge aktualisieren.** Muse Spark, Cat Jam und LL Alpha gibt es beim Anbieter derzeit nicht; Beam ist neu. Die Rangfolge ändert laut `CLAUDE.md` nur Andre.
 4. **Hänger erkennen.** MiMo startete oft den Antwortstrom und lieferte dann 0 Token bis zum Timeout. Das Skript erkennt nur „Rate limit exceeded“. Eine Prüfung „nach N Sekunden noch keine Ausgabe“ würde 15 Minuten je Hänger sparen.
@@ -100,12 +108,12 @@ Punkte = Summe der Einzelpunkte in verwertbaren Antworten; Treffer = davon best�
 
 | Modell | Antworten / Versuche | Punkte | Treffer | Tempo | Eindruck |
 |---|---|---|---|---|---|
-| deepseek-v4.1-flash-free | 4 / 5 | 27 | 4 (N01, N02, N04, N05) | 50–356 s | Bestes Verhältnis von Treffern zu Lärm; einziges Modell, das N01 unabhängig fand, mit Messung. Liest das Design und lässt Dokumentiertes weg. |
-| space-bunny-free | 4 / 4 | 37 | 3 (N02, N04, N05) | 55–110 s | Zuverlässig erreichbar, korrekte Zeilen, gründlich; übersieht aber N01 und kritisiert oft dokumentierte Entscheidungen. |
-| mimo-v2.6-flash-free | 2 / 9 | 18 | 3 (N02, N04, N05) | 185–386 s | Wenn es antwortet, gut; meistens Hänger ohne ein einziges Token. |
+| deepseek-v4.1-flash-free | 5 / 7 | 33 | 4 (N01, N02, N04, N05) | 50–356 s | Bestes Verhältnis von Treffern zu Lärm; fand N01 im ersten Lauf mit Messung, im isolierten zweiten Lauf aber nicht. Liest das Design und lässt Dokumentiertes weg. |
+| space-bunny-free | 5 / 6 | 47 | 3 (N02, N04, N05) | 55–120 s | Zuverlässig erreichbar, korrekte Zeilen, gründlich; übersieht aber N01, kritisiert oft dokumentierte Entscheidungen und hatte in der Nachholung zwei sachlich falsche Hauptpunkte. |
+| mimo-v2.6-flash-free | 3 / 11 | 25 | 4 (N01, N02, N04, N05) | 185–386 s | Wenn es antwortet, gut: fand N01 in der Nachholung unabhängig. Meistens aber Hänger ohne ein einziges Token. |
 | glm-5.3-flash-free | 4 / 7 | 29 | 2 (N04, N05) | 235–430 s | Solide formuliert, langsam (einmal 49.000 Token Nachdenken ohne Antwort), viele Wiederholungen dokumentierter Punkte. |
-| longcat-2.5-preview-free | 4 / 8 (davon 1 leer) | 16 | 1 (N05) | 115–721 s | Langsam und dünn; zweimal leere Ausgabe, einmal nur Zwischentext. |
-| big-pickle | 3 / 7 (ohne die kontaminierte) | 25 | 0 | 145–311 s | Viele Punkte, keiner bestätigt; hat einmal fremde Antworten abgeschrieben. |
+| longcat-2.5-preview-free | 4 / 10 (davon 1 leer) | 16 | 1 (N05) | 115–721 s | Langsam und dünn; viermal leere Ausgabe (bei `chain` jedes Mal, einmal 32.000 Token Nachdenken ohne Antwort), einmal nur Zwischentext. |
+| big-pickle | 4 / 9 (ohne die kontaminierte) | 33 | 0 | 145–366 s | Viele Punkte, keiner bestätigt; hat einmal fremde Antworten abgeschrieben. Isoliert nachgeholt fand es N01 nicht. |
 | beam-free (neu) | 4 / 4 | 28 | 0 | 20–66 s | Mit Abstand am schnellsten und immer erreichbar, knapp und mit korrekten Zeilen, aber keinen echten Fehler gefunden; eine sachlich falsche Aussage. |
 
 Gegenüber der Rangfolge in `CLAUDE.md` (Space Bunny vor DeepSeek) lag DeepSeek in dieser Nacht vorn. Der Eindruck beruht auf vier Bereichen eines kleinen Plugins; die Rangfolge ändert Andre.

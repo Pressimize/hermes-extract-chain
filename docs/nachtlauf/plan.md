@@ -41,3 +41,7 @@ Nicht an die Modelle: `docs/` (Konsistenz Doku ↔ Code prüfe ich selbst), `scr
 - **01:25** Die Prompts enthalten zusätzlich die Zeile „Arbeitsweise: Prüfe ausschließlich die angehängten Dateien …“. GLM (49.000 Token Nachdenken) und MiMo (14 Werkzeugaufrufe) liefen auch in 900 s in den Timeout.
 - Nicht mehr verfügbar beim Anbieter: `muse-spark-1.3-contributor-free`, `cat-jam-free`, `ll-alpha-free` („Model not found“). Neu verfügbar und zusätzlich gefragt: `beam-free`. Nemotron-Modelle sind verfügbar, laut `CLAUDE.md` aber nicht zu nutzen.
 - **04:32** Letzter Modellaufruf beendet. Eine Wiederholungsrunde für alle Lücken (MiMo, GLM, Longcat, Big Pickle), danach keine weitere.
+
+## Nachholung 2026-10-17 morgens
+
+Auf Andres Wunsch: Läufe mit möglicher Einsicht in fremde Antworten (Big Pickle, DeepSeek `chain`; Space Bunny `provider`) und Läufe ohne Antwort (MiMo `chain`/`provider`, Longcat `chain`, Big Pickle `chain`) nachgeholt. Die Läufe fanden in einem frischen Klon nur von `main` im Scratchpad statt (keine Antworten, keine Fixes, keine anderen Branches), mit Prompts von außerhalb, einem Modell je Aufruf und sofortigem Herauskopieren jeder Antwort. Longcat bekam im Wiederholungsversuch nur `chain.py` (Prompt `prompts/chainonly.txt`), weil es zuvor das Limit fürs Nachdenken ausgeschöpft hatte. Ergebnis in `befunde.md`, Abschnitt „Nachholung“.
