@@ -34,7 +34,7 @@ This plugin registers its own extract provider that chains three services per UR
 - **S2** The provider subclasses `agent.web_search_provider.WebSearchProvider`. Its `name` is `extract-chain`; `supports_search()` returns False and `supports_extract()` True. `is_available()` is true iff `TINYFISH_API_KEY` is set, and checks without network access.
 - **S3** Keys are read only via `agent.web_search_provider.get_provider_env(...)`, so per-profile `.env` files work.
   - If reading a key raises (e.g. `UnscopedSecretError`), the key counts as missing.
-  - Keys never appear in logs, error texts or notes.
+  - Keys of 8 or more characters never appear in logs, error texts or notes (A4); a shorter value is not taken for a key.
 - **S4** `async def extract(urls, **kwargs)`. kwargs such as `format` are ignored; Markdown is always requested.
 - **S5** One entry per input URL, in input order, duplicates included (each as an object of its own).
   - Keys: `url` (the input URL), `title`, `content`, `error` (`None` or text), and `metadata` with `sourceURL` (the input URL) and, when known, `finalURL`.
@@ -81,7 +81,7 @@ This plugin registers its own extract provider that chains three services per UR
   | TinyFish | until the next 00:05 UTC, at most 24 hours | its daily allowance renews at 00:00 UTC; a longer pause would send every URL to Firecrawl although TinyFish is free again. The five minutes cover clock differences, so that a 402 just after midnight does not cost a whole day |
   | Firecrawl, Keenable | 24 hours | monthly quotas; the stage is asked again once a day |
 
-  - A paused stage counts as failed. Its reason repeats the reply that started the pause and adds the remaining time, e.g. `Firecrawl: API 402: Insufficient credits (paused for another 17 h)`; below one hour it is given in minutes. The chain continues as after any other error (K2–K4).
+  - A paused stage counts as failed. Its reason repeats the reply that started the pause and adds the remaining time, e.g. `Firecrawl: API 402: Insufficient credits (paused for another 17 h)`; below one hour it is given in minutes, rounded up, from one hour on as the nearest hour (as in search-chain). The chain continues as after any other error (K2–K4).
   - Only an HTTP 402 of the provider's own API starts a pause. A rate limit (429), an error for a single URL and the status of the target page do not.
   - A pause belongs to the pair of provider and key, so profiles with different keys in one process do not pause each other, and a corrected key is used at once. The pause table stores a digest of the key, not the key.
   - Pauses live in memory only. A new process starts without pauses, and a pause that is no longer justified (credits topped up) ends by itself or with a restart.
@@ -101,7 +101,7 @@ Checks run in this order; the first match wins: E1, E2, E7, E3, E4, E8, E5. The 
 Rules:
 
 - **E1** `error`: the result has an error text.
-- **E2** `empty`: fewer than 20 characters remain after removing HTML tags and stripping whitespace. Firecrawl's empty `<body></body>` counts as empty. A tag is `<`, an optional `/`, a tag name (a letter, then letters, digits or `-`), then whitespace with attributes, `/` or directly `>`; a comment or doctype is `<!…>`. Neither contains a further `<`. So `a < b … c > d` and `i<n; … p->next` in an article are text, not tags.
+- **E2** `empty`: fewer than 20 characters remain after removing HTML tags and stripping whitespace. Firecrawl's empty `<body></body>` counts as empty. A tag is `<`, an optional `/`, a tag name (a letter, then letters, digits or `-`), then whitespace with attributes, `/` or directly `>`; a comment or doctype is `<!…>`. Neither contains a further `<`. So `a < b … c > d`, `i<n; … p->next`, `Map<String, Integer>` and Markdown autolinks such as `<https://example.com/>` are text, not tags.
 - **E7** `challenge`: the visible text (as in E2) is shorter than `CHALLENGE_BELOW` = 1,500 characters and contains at least one marker of the list `CHALLENGE` (bot-check phrases such as "not a robot", "verify you are human", "checking your browser", "captcha", "access denied"; case-insensitive). The length cap keeps real articles that mention these phrases out of the class. Providers return bot checks with status 200, so the text decides (D21). Checked after E2 and before E3.
 - **E3** `wall`: at least 2 different wall markers occur in the check area. The check area is the raw `content` (Markdown or HTML, uncleaned): the whole text below 4,000 characters, otherwise the first 2,000 characters.
   - A real consent wall replaces the content: it stands at the beginning, or the page is short (derStandard via TinyFish: 992 characters, wall text at the end).
@@ -144,15 +144,15 @@ Rules:
   - A URL in neither list gets `TinyFish: no result`. An entry of `results[]` or `errors[]` that is no object is skipped, so only its URL is left without a result; a `results` or `errors` that is no list counts as empty. A non-2xx reply, a reply that is no JSON object or an empty one (`TinyFish: malformed reply`) or a transport error fails all URLs of the request: `TinyFish: HTTP <status>` or `TinyFish: <exception class>`.
 - **A2** Firecrawl:
   - `POST https://api.firecrawl.dev/v2/scrape` with `Authorization: Bearer <key>`; body `{"url", "formats": ["markdown"], "onlyMainContent": true, "maxAge": 3600000, "timeout": 30000, "parsers": [{"type": "pdf", "maxPages": 30}]}`.
-  - Success means `success: true`; the text is `data.markdown` (a missing or empty one counts as an empty page, E2), the title comes from `data.metadata.title`, the final URL from `data.metadata.url`.
+  - Success means `success: true`; the text is `data.markdown` (a missing or empty one counts as an empty page, E2), the title comes from `data.metadata.title`, the final URL from `data.metadata.url`, else from `data.metadata.sourceURL`.
   - A target status (`data.metadata.statusCode`) outside 200–299 and not 304 becomes `target HTTP <status>`. Firecrawl otherwise returns such pages without an error field, and still bills them.
-  - An API error becomes `API <status>: <error>`. A successful reply whose `data` or `data.metadata` is no JSON object is `Firecrawl: malformed reply` (code `malformed`).
+  - An API error becomes `API <status>: <error>`. A successful reply whose `data` or `data.metadata` is present but no JSON object is `Firecrawl: malformed reply` (code `malformed`); an empty or missing one counts as `{}`.
   - PDFs are capped at 30 pages, because Firecrawl bills one credit per PDF page. If `metadata.totalPages` exceeds `metadata.numPages`, the result gets note V7.
 - **A3** Keenable:
   - `GET https://api.keenable.ai/v1/fetch?url=...` with `Authorization: Bearer <key>` and `X-Keenable-Title: hermes-extract-chain`.
   - No `live` parameter: its price is undocumented, and the index copy is what solves consent walls.
   - A 2xx reply that is no JSON object, or an empty one, is `Keenable: malformed reply`. On non-2xx, the error is the JSON field `message` (else `error`), else the response text, else `HTTP <status>`, e.g. `{"error": "Unprocessable entity", "message": "The page is behind a login or paywall"}`.
-- **A4** Provider error texts are reduced to one line (runs of whitespace, line breaks included, become one space, so that a note stays one line, V1), cut to 200 characters and prefixed with the provider name. The remaining time of a pause (K7) is added after the cut. A key echoed in them is replaced by `[key]` (S3), as sent or percent-encoded and in any case. Each error also carries a short code for the log (L1), and a failed reply of the provider's API carries its HTTP status, which K7 reads.
+- **A4** Provider error texts are reduced to one line (runs of whitespace, line breaks included, become one space, so that a note stays one line, V1), cut to 200 characters and prefixed with the provider name; control and other non-printable characters in the cut text become spaces as well. The remaining time of a pause (K7) is added after the cut. A key of 8 or more characters echoed in them is replaced by `[key]` (S3), as sent or percent-encoded and in any case; a shorter value is not masked, as in search-chain. Each error also carries a short code for the log (L1), and a failed reply of the provider's API carries its HTTP status, which K7 reads.
 - **A5** One `httpx.AsyncClient` per `extract` call (`async with`), closed on cancellation too. It honours `HTTP(S)_PROXY`/`NO_PROXY`. It does not follow redirects, so a key never travels to another host; a redirect from a provider's API counts as an error (`http_3xx`, `api_3xx`). TLS uses Hermes' process-wide OS trust store, which Hermes installs at start-up.
 
 ## 9. Time budget

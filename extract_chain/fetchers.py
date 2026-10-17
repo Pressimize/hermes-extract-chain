@@ -23,6 +23,7 @@ TINYFISH_DEADLINE = 40.0
 FIRECRAWL_DEADLINE = 40.0
 KEENABLE_DEADLINE = 25.0
 ERROR_MAX = 200  # A4
+KEY_MIN = 8  # S3: a shorter value is not masked as a key
 TINYFISH_MAX_URLS = 10  # per request (TinyFish limit)
 FIRECRAWL_PDF_MAX_PAGES = 30  # Firecrawl bills one credit per PDF page
 
@@ -43,14 +44,17 @@ _CODE = re.compile(r"[a-z0-9_]{1,40}")  # A1: what counts as an error code of Ti
 def _redact(detail: object, key: str) -> str:
     """A reply that echoes the key must not carry it into the result or the log (S3); one line (V1)."""
     text = str(detail)
-    for form in {key, quote(key, safe="")} if key else ():  # as sent and percent-encoded, in any case
+    forms = {key, quote(key, safe="", errors="surrogatepass")} if len(key) >= KEY_MIN else ()
+    for form in forms:  # as sent and percent-encoded, in any case
         text = re.sub(re.escape(form), "[key]", text, flags=re.IGNORECASE)
     return " ".join(text.split())
 
 
 def _error(provider: str, detail: object, code: str, key: str = "", status: int | None = None) -> dict:
     """status: HTTP status of the provider's API reply, if that is what failed (read by K7)."""
-    failed = {"error": f"{provider}: {_redact(detail, key)[:ERROR_MAX]}", "code": code}
+    text = _redact(detail, key)[:ERROR_MAX]
+    text = " ".join("".join(c if c.isprintable() else " " for c in text).split())  # A4: no control characters
+    failed = {"error": f"{provider}: {text}", "code": code}
     return failed if status is None else {**failed, "status": status}
 
 

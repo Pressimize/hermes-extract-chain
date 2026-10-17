@@ -159,7 +159,9 @@ class Fake:
 
 
 def run(tinyfish, firecrawl=None, keenable=None):
-    return asyncio.run(run_chain(URL, tinyfish, firecrawl, keenable))
+    out = asyncio.run(run_chain(URL, tinyfish, firecrawl, keenable))
+    assert out["url"] == URL and out["metadata"]["sourceURL"] == URL  # S5: every entry names its input URL
+    return out
 
 
 def test_tinyfish_ok_no_note_no_fallback():
@@ -167,6 +169,7 @@ def test_tinyfish_ok_no_note_no_fallback():
     out = run(doc(ARTICLE), fc, ke)
     assert out == {"url": URL, "title": "T", "content": ARTICLE, "error": None, "metadata": {"sourceURL": URL}}
     assert fc.calls == ke.calls == 0
+    assert run(doc(ARTICLE, title=None))["title"] == ""  # S5: no title is an empty one
 
 
 def test_tinyfish_paywall_note_only():
@@ -237,8 +240,8 @@ def test_all_fail_joined_error():
         Fake(doc(error="Firecrawl: target HTTP 403")),
         Fake(doc(error="Keenable: Gateway timeout")),
     )
-    assert out["error"] == "TinyFish: bot_blocked; Firecrawl: target HTTP 403; Keenable: Gateway timeout"
-    assert out["content"] == ""
+    error = "TinyFish: bot_blocked; Firecrawl: target HTTP 403; Keenable: Gateway timeout"
+    assert out == {"url": URL, "title": "", "content": "", "error": error, "metadata": {"sourceURL": URL}}  # S5
 
 
 def test_wall_without_alternative_returns_wall_page():
@@ -255,16 +258,20 @@ def test_firecrawl_wall_page_kept_when_keenable_fails():
     assert "Keenable: empty page" in out["content"].splitlines()[0]
 
 
-def test_missing_keys_skip_stages():
+def test_missing_keys_skip_stages(caplog):
+    caplog.set_level(logging.INFO, logger="extract_chain.chain")
     out = run(tf_error("bot_blocked"), None, None)
     assert out["error"] == "TinyFish: bot_blocked; Firecrawl: no API key; Keenable: no API key"
+    assert caplog.messages == ["extract-chain news.example: tinyfish=bot_blocked firecrawl=no_key keenable=no_key"]
 
 
-def test_exception_in_stage_becomes_error():
+def test_exception_in_stage_becomes_error(caplog):
+    caplog.set_level(logging.INFO, logger="extract_chain.chain")
     ke = Fake(doc(ARTICLE))
     out = run(tf_error("bot_blocked"), Fake(exc=RuntimeError("boom")), ke)
     assert "Firecrawl: RuntimeError" in out["content"].splitlines()[0]
     assert ke.calls == 1
+    assert caplog.messages == ["extract-chain news.example: tinyfish=bot_blocked firecrawl=exception keenable=ok"]  # L1
 
 
 def test_log_line(caplog):
