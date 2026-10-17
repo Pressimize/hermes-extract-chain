@@ -362,6 +362,13 @@ def calls(api, clock):
     return call
 
 
+@pytest.mark.parametrize(
+    ("seconds", "text"), [(1, "1 min"), (3599, "60 min"), (3600, "1 h"), (5399, "1 h"), (5400, "2 h"), (86400, "24 h")]
+)
+def test_remaining_pause_is_rounded_as_in_search_chain(seconds, text):  # K7
+    assert provider._left(seconds) == text
+
+
 def test_pause_after_402_skips_the_stage_for_24_hours(env, caplog):
     caplog.set_level(logging.INFO)
     clock = Clock(NOON)

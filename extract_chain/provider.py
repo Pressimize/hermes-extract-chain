@@ -59,12 +59,12 @@ def _pause_seconds(provider: str, now: float) -> float:
 
 def _slot(provider: str, key: str) -> tuple[str, str]:
     """K7: the pause table is keyed by a digest of the API key, so it holds no key."""
-    return provider, hashlib.sha256(key.encode("utf-8", "replace")).hexdigest()
+    return provider, hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def _left(seconds: float) -> str:
-    """Remaining pause for the error text, rounded up."""
-    return f"{math.ceil(seconds / 3600)} h" if seconds > 3600 else f"{math.ceil(seconds / 60)} min"
+    """Remaining pause for the error text: minutes rounded up below one hour, else the nearest hour."""
+    return f"{math.floor(seconds / 3600 + 0.5)} h" if seconds >= 3600 else f"{math.ceil(seconds / 60)} min"
 
 
 def _blocked(url: str, entry_url: str | None = None) -> dict | None:

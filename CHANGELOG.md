@@ -6,6 +6,7 @@ Fixes from the overnight review (`docs/reviews/2026-10-16.md`). No change to the
 
 - A `<` in the text (`x < 10`, `>>> 1 < 2`, `i<n; i++`) no longer swallows everything up to the next `>` when the visible length is measured. A programming article could be classified as `empty` or `thin` before and was replaced by Firecrawl or Keenable. The tag pattern is also linear now; a page with many `<` and no `>` took seconds of CPU before (N01).
 - A Firecrawl reply whose `data` or `metadata` is no object gives `Firecrawl: malformed reply` (code `malformed`) instead of `Firecrawl: AttributeError`, as TinyFish and Keenable already do (N02).
+- Aligned with hermes-search-chain: control and other non-printable characters in a provider's error text become spaces; a key is masked only from 8 characters on; the remaining time of a pause is given as the nearest hour from one hour on (exactly one hour read `60 min` before, now `1 h`).
 - Docs: the troubleshooting table now says that bot-check pages are recognised (E7, since 0.2.5) (N03).
 - Developer scripts: `scripts/replay.py` no longer stops on a stored error detail that is JSON but no object (N04); `scripts/live_check.py` checks URLs of the same host together instead of matching log lines by host only (N05). New tests in `tests/test_scripts.py`.
 

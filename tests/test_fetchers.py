@@ -271,9 +271,19 @@ def test_key_is_redacted_in_any_case_and_percent_encoded():
     out = call(fetchers.firecrawl, echo, "u", "fc-SE/CRET+x")
     assert out["error"] == "Firecrawl: API 401: keys [key] and [key] and [key] rejected"
     # TinyFish's code is lowercased: a key echoed in another case must not become the code (L1)
-    reply = {"errors": [{"url": "u", "error": "ABC123"}]}
-    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), ["u"], "abc123")["u"]
+    reply = {"errors": [{"url": "u", "error": "ABC123XY"}]}
+    out = call(fetchers.tinyfish, lambda r: httpx.Response(200, json=reply), ["u"], "abc123xy")["u"]
     assert (out["error"], out["code"]) == ("TinyFish: [key]", "fetch_failed")
+
+
+def test_key_below_eight_characters_is_not_masked():  # S3: as in search-chain
+    out = call(fetchers.keenable, lambda r: httpx.Response(401, text="bad key k-12345"), "u", "k-12345")
+    assert out["error"] == "Keenable: bad key k-12345"
+
+
+def test_control_characters_in_an_error_become_spaces():  # A4: one printable line
+    out = call(fetchers.keenable, lambda r: httpx.Response(500, text="a\x1b[31mb\x00c\u200bd"), "u", "k")
+    assert out["error"] == "Keenable: a [31mb c d"
 
 
 def test_megabyte_error_page_gives_a_short_error():
