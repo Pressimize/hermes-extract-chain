@@ -12,6 +12,9 @@ PACE_S     wait after each call, per URL of the call (default 7.5 s: below 8 URL
 Hermes is found under %LOCALAPPDATA%/hermes, i.e. Hermes Desktop on Windows (override with HERMES_ROOT).
 Writes OUTDIR/results.jsonl with the tool output as the model sees it (article texts: keep it outside git) and
 prints a summary without texts.
+
+KEENABLE_NOTE copies the start of chain.NOTE_KEENABLE on purpose (the script runs with -I in Hermes' Python and
+does not import the plugin); it must follow changes to that note.
 """
 
 import asyncio

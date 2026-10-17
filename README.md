@@ -50,9 +50,9 @@ Example of what the model sees:
 
 - Hermes Agent ≥ 0.21. Tested live with Hermes Desktop 0.21.6 on Windows; the plugin and extract code paths were checked against the v0.21.6 release that the Docker image is built from.
 - API keys for three page-fetch services:
-  - [TinyFish](https://tinyfish.ai): fetch API returning a page's main content as Markdown; required; free tier 1,000 URLs/day.
-  - [Firecrawl](https://firecrawl.dev): scraping API with a browser and proxies, returns the article with much of the page around it; free tier 1,000 credits/month.
-  - [Keenable](https://keenable.ai): search index that serves stored copies of pages; free tier 100,000 requests/month.
+  - [TinyFish](https://tinyfish.ai): fetch API returning a page's main content as Markdown; required.
+  - [Firecrawl](https://firecrawl.dev): scraping API with a browser and proxies, returns the article with much of the page around it.
+  - [Keenable](https://keenable.ai): search index that serves stored copies of pages.
 
   Without a Firecrawl or Keenable key, that stage is skipped.
 - Network access to `api.fetch.tinyfish.ai`, `api.firecrawl.dev` and `api.keenable.ai` (HTTPS; `HTTPS_PROXY` is honoured).
@@ -123,32 +123,41 @@ extract-chain www.stern.de: tinyfish=bot_blocked firecrawl=ok
 
 ## Notes the model may see
 
+Every note is one line at the top of the text, starting with `[extract-chain]` (not repeated in the table). Conditions and order: [design.md, section 7](docs/design.md#7-notes-for-the-model).
+
 | Note | Meaning |
 |---|---|
-| `Live fetch via Firecrawl (TinyFish: <reason>).` | TinyFish failed; the text is Firecrawl's live copy of the whole page |
-| `Copy from Keenable's index; it may be older than the live page (live fetch: <reasons>).` | Both live fetches failed or hit a consent wall; the text is an index copy |
-| `Paywall indicators found; the text is probably only the free teaser.` | Paywall markers were found; no further provider is asked |
+| `Live fetch via Firecrawl (<reason>).` | TinyFish failed; the text is Firecrawl's live copy |
+| `Paywall indicators found; the text is probably only the free teaser.` | Paywall markers found; no further provider is asked |
+| `Copy from Keenable's index; it may be older than the live page (live fetch: <reasons>).` | Both live fetches failed or hit a consent wall |
 | `Consent wall detected; no alternative source found (<reasons>). The text below is the consent page.` | Only a consent page could be fetched |
-| `PDF cut to the first 30 of <n> pages (Firecrawl page cap).` | A long PDF came via Firecrawl, which bills per page |
+| `PDF cut to the first <n> of <total> pages (Firecrawl page cap).` | A long PDF came via Firecrawl |
+| `Very short page (<n> characters); a second live fetch (Firecrawl) was short as well.` | Both live fetches returned a short page |
+| `Very short page (<n> characters).` | Firecrawl's short page after a TinyFish failure |
+| `Very short page (<n> characters); no second opinion (<reason>).` | TinyFish's short page; Firecrawl had nothing better |
+| `The site redirected to <final_url>; the text below is from that page.` | The page came from another host or a home page |
+| `This looks like a bot-check page; no other source had the page (<reasons>). The text below is what the site returned.` | Only a bot-check page could be fetched |
 
 ## Limitations
 
-- **Paywalls are not bypassed.** Many paywalled teasers carry no marker; they are returned as normal text. Seen at FAZ, SZ, Welt, Handelsblatt and Tagesspiegel.
-- **Keyword rules.** Wall and paywall detection uses marker phrases tuned on German news sites, plus common English consent phrases. An article *about* paywalls or cookie banners can trigger a note. English-language paywalls are mostly not detected.
+- **Paywalls are not bypassed.** Many paywalled teasers carry no marker; they are returned as normal text.
+- **Keyword rules.** Wall and paywall detection uses marker phrases tuned on German news sites. An article *about* paywalls or cookie banners can trigger a note; English-language paywalls are mostly not detected.
 - **Index copies** (Keenable) can be older than the live page; the note says so.
 - **Privacy.** Every URL is sent to TinyFish, and possibly to Firecrawl and Keenable.
-- **Fixed providers and order;** see the FAQ.
-- **Hermes caches** successful results, notes included, for `web.cache_ttl_minutes` (default 20).
 
-Edge cases and failure behaviour: [docs/troubleshooting.md](docs/troubleshooting.md).
+The full list: [design.md, section 13](docs/design.md#13-known-limitations). Edge cases and failure behaviour: [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Costs and quotas
 
-Firecrawl is only used when TinyFish fails, and PDFs are capped at 30 pages there (one credit per page). Firecrawl still bills target 403/404 pages it returns as documents. For a hard cost cap, keep these off: TinyFish wallet auto-reload, Firecrawl auto-recharge, Keenable auto top-up. With them off, an exhausted quota gives HTTP 402, and the chain moves on to the next stage. It then skips the exhausted provider without a request: TinyFish until five minutes after its daily reset at 00:00 UTC, Firecrawl and Keenable for 24 hours (`paused` in the log). Watch usage in the log:
+Free tiers and prices: [docs/evaluation.md](docs/evaluation.md#free-tiers-and-costs-vendor-pages-2026-10-09). Firecrawl is only used when TinyFish fails.
 
-```bash
-grep -o "firecrawl=[a-z_0-9]*" logs/agent.log | sort | uniq -c
-```
+- PDFs are capped at 30 pages on Firecrawl (one credit per page), and Firecrawl bills target 403/404 pages it returns as documents.
+- For a hard cost cap, keep TinyFish wallet auto-reload, Firecrawl auto-recharge and Keenable auto top-up off. An exhausted quota then gives HTTP 402, the chain moves on, and the exhausted stage is skipped for a while (`paused` in the log; pause rules: [design.md, K7](docs/design.md#5-chain-per-url)).
+- Watch usage in the log:
+
+  ```bash
+  grep -o "firecrawl=[a-z_0-9]*" logs/agent.log | sort | uniq -c
+  ```
 
 ## FAQ
 
@@ -182,10 +191,12 @@ uv run pytest
 |---|---|
 | `extract_chain/` | The plugin: `provider.py` (Hermes interface), `chain.py` (classification, chain, notes), `fetchers.py` (REST clients) |
 | `tests/` | Unit tests without network (`httpx.MockTransport`; Hermes is stubbed in `conftest.py`) |
-| `scripts/replay.py` | Replays the chain on stored raw results; the raw article texts are not published |
+| `scripts/replay.py` | Maintainer only: replays the chain on stored raw results; needs the raw article texts, which are not published |
 | `scripts/live_check.py` | Calls Hermes' real `web_extract` path in a test profile, without an LLM and with rate limiting |
 | `docs/` | [evaluation](docs/evaluation.md) (provider choice, test scenarios), [design](docs/design.md), [validation](docs/validation.md), [troubleshooting](docs/troubleshooting.md) |
 | `data/` | Test data without article texts: URL lists and per-URL results as CSV |
+| `.github/workflows/ci.yml` | CI: ruff and pytest on Python 3.11 and 3.14 |
+| `CHANGELOG.md` | Changes per release |
 
 `pyproject.toml` only configures the tooling. It sits at the repository root on purpose: Hermes treats a plugin directory that contains a `pyproject.toml` as a package-manager member.
 

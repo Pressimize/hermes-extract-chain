@@ -72,16 +72,16 @@ The plugin is not loaded. Check, in this order:
 The TinyFish key is wrong or missing in the profile's `.env`. Hermes reads keys per profile; a key exported in the shell may not reach a gateway or a container. While this lasts, every URL goes to Firecrawl and costs credits.
 
 **`tinyfish=http_402`.**
-The free daily allowance is used up: 1,000 successful URLs per day, reset at 00:00 UTC, and the TinyFish wallet is empty. Wait for the reset or top up. In the meantime Firecrawl takes over and its credits drain quickly. After the 402 the plugin skips TinyFish until 00:05 UTC (`tinyfish=paused`).
+The free daily allowance is used up and the TinyFish wallet is empty. Wait for the daily reset or top up. In the meantime Firecrawl takes over and its credits drain quickly. After the 402 the plugin skips TinyFish until 00:05 UTC (`tinyfish=paused`, K7).
 
 **`tinyfish=http_429` / `firecrawl=api_429`.**
-Rate limits: TinyFish allows 150 URLs/min per key, Firecrawl's free plan 10 scrapes/min. Agents and profiles that share a key share the limit.
+Rate limits of the providers' plans ([evaluation.md](evaluation.md#free-tiers-and-costs-vendor-pages-2026-10-09)). Agents and profiles that share a key share the limit.
 
 **`firecrawl=api_402`.**
-Firecrawl credits are exhausted (1,000/month on the free plan). URLs that TinyFish cannot fetch now end up at Keenable, as index copies or not at all. Top up or wait for the monthly reset. After the 402 the plugin skips Firecrawl for 24 hours (`firecrawl=paused`); the same holds for Keenable.
+Firecrawl credits are exhausted. URLs that TinyFish cannot fetch now end up at Keenable, as index copies or not at all. Top up or wait for the monthly reset. After the 402 the plugin skips Firecrawl for 24 hours (`firecrawl=paused`, K7); the same holds for Keenable.
 
 **`…=paused` although the credits are back.**
-A pause does not notice a top-up. It ends by itself (TinyFish at 00:05 UTC, the others after 24 hours); to use the stage at once, restart Hermes or the gateway. `errors.log` shows when a pause began: `extract-chain: Firecrawl paused for 86400 s (api_402)`.
+A pause does not notice a top-up. It ends by itself (TinyFish at 00:05 UTC, the others after 24 hours, K7); to use the stage at once, restart Hermes or the gateway. `errors.log` shows when a pause began: `extract-chain: Firecrawl paused for 86400 s (api_402)`.
 
 **`firecrawl=timeout` only in calls with several URLs.**
 Firecrawl's free plan scrapes 2 pages at a time and queues the rest. Queue time counts against the 30 s timeout. The URL moves on to Keenable; this is expected (K6).
@@ -120,7 +120,7 @@ A Hermes update moved the policy module, and the plugin fetches nothing without 
 Firecrawl is only used when TinyFish fails. Common causes:
 
 - sites that block TinyFish (`bot_blocked`: stern.de, Stack Overflow and the whole Stack Exchange network in our tests; `target_http_error`: faz.net);
-- PDFs, which cost 1 credit per page, capped at 30;
+- PDFs, which cost 1 credit per page (capped at 30, A2);
 - target 403/404 pages, which Firecrawl bills when it returns a document.
 
 The `firecrawl=` counts in the log show which sites cause it.
@@ -136,28 +136,21 @@ The `firecrawl=` counts in the log show which sites cause it.
 | Redirect to a blocked site | The result is replaced by Hermes' policy block entry (S7). |
 | Website blocklist | Checked before any request; blocked URLs reach no provider. |
 | Consent wall, Keenable fails | The consent page comes back with the wall note listing all reasons. Hermes caches it like any success. |
-| Paywall detected | Teaser plus paywall note; no further provider is asked (D4). |
-| Paywall without markers (FAZ, SZ, Welt, Handelsblatt, Tagesspiegel) | Returned as normal content; the teaser is not recognised (D5). |
 | Firecrawl returns an empty `<body></body>` | Treated as empty; moves on to Keenable. |
 | Target 403/404 via Firecrawl | Error `target HTTP <status>`; Firecrawl still bills one credit. |
 | Long PDF where TinyFish fails | Firecrawl reads the first 30 pages; the note says *PDF cut to the first 30 of N pages*. |
 | `content_too_large`, `login_required`, `page_not_found` | Final; no other provider is asked. |
 | Page that loads with status 200 but shows "Access denied" or a challenge text | Recognised as a bot-check page if it is shorter than 1,500 visible characters and contains a phrase of the list (E7); the chain moves on to Firecrawl and Keenable. If neither has the page, the bot-check page comes back with the note V11. A bot check in other words, or a longer one, is not recognised. |
-| English-language paywalls | Markers are mostly German. An English teaser is usually not detected (D5 applies). |
 | Missing TinyFish key | The provider reports itself unavailable, and Hermes hides `web_extract` unless another web backend is available. If the tool is still offered, stage 1 fails with `no_key` for all URLs and the chain continues with Firecrawl. |
 | Missing Firecrawl or Keenable key | That stage is skipped (`no_key`). |
 | User stops the turn | No further requests; remaining stages report `interrupted` (S8). |
 | Hermes timeout | All URLs of the call fail, also those that had finished (Hermes discards the whole call). |
-| Hermes cache | Successful results, notes included, are reused for 20 minutes without running the chain. |
-| Privacy | Every URL goes to TinyFish, and possibly to Firecrawl and Keenable. Hermes refuses URLs that contain secrets before any provider sees them. |
+
+Paywalls (detected or not, English ones), the Hermes cache and privacy: [design.md, section 13](design.md#13-known-limitations).
 
 ## Cost and quota safety
 
-| Provider | Free tier | When exhausted | Hard cap |
-|---|---|---|---|
-| TinyFish | 1,000 successful URLs/day, 150 URLs/min | HTTP 402, unless the wallet has balance | Keep wallet auto-reload off; balance via `GET /v1/wallet` |
-| Firecrawl | 1,000 credits/month, 10 scrapes/min, 2 concurrent | HTTP 402 until the monthly reset | Keep auto-recharge off (dashboard, paid plans); PDFs are capped at 30 pages |
-| Keenable | 100,000 requests/month, 10 requests/s | HTTP 402 | Keep auto top-up off (console) |
+Hard caps and what happens at an exhausted quota: [README, Costs and quotas](../README.md#costs-and-quotas). Free tiers: [evaluation.md](evaluation.md#free-tiers-and-costs-vendor-pages-2026-10-09). Where to switch off auto top-up: TinyFish wallet auto-reload (balance via `GET /v1/wallet`); Firecrawl auto-recharge (dashboard, paid plans); Keenable auto top-up (console). Keenable allows 10 requests/s.
 
 ## Reporting a problem
 

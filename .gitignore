@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+.coverage
 # Live-check output contains article texts; keep it outside the repo anyway.
 out/

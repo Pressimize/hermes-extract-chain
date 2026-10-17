@@ -40,31 +40,25 @@ def tf_error(code):
     return doc(error=f"TinyFish: {code}", code=code)
 
 
-# --- E1-E5 -----------------------------------------------------------------------------------------
+# --- E1-E5, E7, E8 -----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("content", "error", "expected"),
-    [
-        ("anything", "TinyFish: bot_blocked", "error"),  # E1 wins over content
-        ("x" * 19, None, "empty"),  # E2 boundary
-        ("x" * 20, None, "thin"),  # E8: 20 characters is no longer ok
-        ("<!DOCTYPE html><html><head></head><body></body></html>", None, "empty"),  # E2 strips tags
-        (WALL_TEXT, None, "wall"),  # E3 two markers
-        ("Cookies zustimmen. " + ARTICLE, None, "ok"),  # E3 one marker only
-        (PAYWALL_TEXT, None, "paywall"),  # E4 definite marker
-        (ARTICLE + "SPIEGEL+", None, "ok"),  # E4 one general marker
-        (ARTICLE + "SPIEGEL+ Jetzt weiterlesen", None, "paywall"),  # E4 two general markers
-        (WALL_TEXT + " Das war die Leseprobe. " + ARTICLE, None, "wall"),  # wall before paywall
-    ],
-)
-def test_classify(content, error, expected):
-    assert classify(doc(content, error)) == expected
+def test_error_wins_over_content():  # E1
+    assert classify(doc("anything", "TinyFish: bot_blocked")) == "error"
 
 
 @pytest.mark.parametrize(
     ("content", "expected"),
     [
+        ("x" * 19, "empty"),  # E2 boundary
+        ("x" * 20, "thin"),  # E8: 20 characters is no longer ok
+        ("<!DOCTYPE html><html><head></head><body></body></html>", "empty"),  # E2 strips tags
+        (WALL_TEXT, "wall"),  # E3 two markers
+        ("Cookies zustimmen. " + ARTICLE, "ok"),  # E3 one marker only
+        (PAYWALL_TEXT, "paywall"),  # E4 definite marker
+        (ARTICLE + "SPIEGEL+", "ok"),  # E4 one general marker
+        (ARTICLE + "SPIEGEL+ Jetzt weiterlesen", "paywall"),  # E4 two general markers
+        (WALL_TEXT + " Das war die Leseprobe. " + ARTICLE, "wall"),  # wall before paywall
         ("I'm not a robot. Please click to confirm.", "challenge"),  # E7 observed: TinyFish, 41 characters
         ("Checking the site connection security. Please wait a moment while we verify.", "challenge"),
         ("Verify you are human by completing the action below.", "challenge"),
@@ -82,11 +76,10 @@ def test_classify(content, error, expected):
         ("captcha " + "a" * 1491, "challenge"),  # 1,499 visible characters
         ("captcha " + "a" * 1492, "ok"),  # 1,500: the cap
         (ARTICLE * 3 + " The captcha on this site is explained here.", "ok"),  # long article that mentions a marker
-        (WALL_TEXT, "wall"),  # wall and paywall keep their place before thin
-        ("Das war die Leseprobe.", "paywall"),
+        ("Das war die Leseprobe.", "paywall"),  # paywall keeps its place before thin
     ],
 )
-def test_classify_challenge_and_thin(content, expected):  # E7, E8
+def test_classify(content, expected):
     assert classify(doc(content)) == expected
 
 
@@ -127,10 +120,15 @@ def test_cookie_zustimmung_counts_once():
     assert classify(doc("Cookie-Zustimmung. Ihre Zustimmung fehlt. " + ARTICLE)) == "wall"
 
 
-def test_wall_window_short_text_checked_completely():
-    text = "a" * (3999 - len(WALL_TEXT)) + WALL_TEXT
-    assert len(text) == 3999
-    assert classify(doc(text)) == "wall"
+def test_wall_window():  # E3: the whole text below 4,000 characters, otherwise the first 2,000
+    short = "a" * (3999 - len(WALL_TEXT)) + WALL_TEXT
+    assert len(short) == 3999
+    assert classify(doc(short)) == "wall"
+    long = "a" * (4000 - len(WALL_TEXT)) + WALL_TEXT
+    assert len(long) == 4000
+    assert classify(doc(long)) == "ok"
+    assert classify(doc("a" * 1990 + WALL_TEXT + "a" * 3000)) == "ok"  # second marker beyond 2000
+    assert classify(doc(WALL_TEXT + "a" * 5000)) == "wall"
 
 
 def test_paywall_area_full_page_ignores_last_quarter():
@@ -142,20 +140,6 @@ def test_paywall_area_full_page_ignores_last_quarter():
     assert classify(doc(early), full_page=True) == "paywall"
     short = "a" * 3000 + footer  # below 4000 characters the whole text counts
     assert classify(doc(short), full_page=True) == "paywall"
-
-
-def test_firecrawl_footer_markers_no_paywall_note():
-    page = ARTICLE * 10 + " SPIEGEL+ Jetzt weiterlesen Mehrfachnutzung erkannt"
-    out = run(tf_error("bot_blocked"), Fake(doc(page)), Fake())
-    assert out["content"] == NOTE_FIRECRAWL.format(reason="TinyFish: bot_blocked") + "\n\n" + page
-
-
-def test_wall_window_long_text_only_start():
-    text = "a" * (4000 - len(WALL_TEXT)) + WALL_TEXT
-    assert len(text) == 4000
-    assert classify(doc(text)) == "ok"
-    assert classify(doc("a" * 1990 + WALL_TEXT + "a" * 3000)) == "ok"  # second marker beyond 2000
-    assert classify(doc(WALL_TEXT + "a" * 5000)) == "wall"
 
 
 # --- K2-K5, V1-V6 ------------------------------------------------------------------------------------
@@ -213,6 +197,12 @@ def test_firecrawl_after_tinyfish_error():
 def test_firecrawl_after_tinyfish_empty():
     out = run(doc(""), Fake(doc(ARTICLE)), Fake())
     assert out["content"].startswith(NOTE_FIRECRAWL.format(reason="TinyFish: empty page"))
+
+
+def test_firecrawl_footer_markers_no_paywall_note():
+    page = ARTICLE * 10 + " SPIEGEL+ Jetzt weiterlesen Mehrfachnutzung erkannt"
+    out = run(tf_error("bot_blocked"), Fake(doc(page)), Fake())
+    assert out["content"] == NOTE_FIRECRAWL.format(reason="TinyFish: bot_blocked") + "\n\n" + page
 
 
 def test_firecrawl_paywall_two_notes():
@@ -349,19 +339,21 @@ def test_both_thin_tinyfish_page_when_shorter_or_equal(firecrawl_text):  # V8, a
 
 
 @pytest.mark.parametrize(
-    ("firecrawl", "reason"),
+    ("firecrawl_doc", "reason"),
     [
-        (Fake(doc(error="Firecrawl: target HTTP 403")), "Firecrawl: target HTTP 403"),
+        (doc(error="Firecrawl: target HTTP 403"), "Firecrawl: target HTTP 403"),
         (None, "Firecrawl: no API key"),
-        (Fake(doc("")), "Firecrawl: empty page"),
-        (Fake(doc(BOT)), "Firecrawl: bot check page"),
-        (Fake(doc(error="Firecrawl: API 402: no credits (paused for another 3 h)", code="paused")), None),
+        (doc(""), "Firecrawl: empty page"),
+        (doc(BOT), "Firecrawl: bot check page"),
+        (
+            doc(error="Firecrawl: API 402: no credits (paused for another 3 h)", code="paused"),
+            "Firecrawl: API 402: no credits (paused for another 3 h)",
+        ),
     ],
 )
-def test_thin_without_second_opinion_returns_tinyfish_page(firecrawl, reason):  # V9, D23
+def test_thin_without_second_opinion_returns_tinyfish_page(firecrawl_doc, reason):  # V9, D23
     ke = Fake(doc(ARTICLE))
-    out = run(doc(SHORT), firecrawl, ke)
-    reason = reason or firecrawl.result["error"]
+    out = run(doc(SHORT), None if firecrawl_doc is None else Fake(firecrawl_doc), ke)
     assert out["content"] == NOTE_THIN_ALONE.format(n=len(SHORT), reason=reason) + "\n\n" + SHORT
     assert out["error"] is None and ke.calls == 0
 
@@ -426,11 +418,9 @@ def test_wall_wins_over_challenge_page():  # V5 before V11
     )
 
 
-def test_keenable_thin_counts_as_ok_and_challenge_as_error():  # K4
+def test_keenable_thin_counts_as_ok():  # K4
     out = run(doc(WALL_TEXT), Fake(), Fake(doc(SHORT)))
     assert out["content"] == NOTE_KEENABLE.format(reasons="TinyFish: consent wall") + "\n\n" + SHORT
-    out = run(tf_error("bot_blocked"), Fake(doc(error="Firecrawl: API 500")), Fake(doc(BOT)))
-    assert out["error"] == "TinyFish: bot_blocked; Firecrawl: API 500; Keenable: bot check page"
 
 
 def test_log_line_new_kinds(caplog):  # L1

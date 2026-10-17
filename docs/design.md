@@ -12,12 +12,7 @@ This plugin registers its own extract provider that chains three services per UR
 2. **Firecrawl**: live, gets past most bot protection that stops TinyFish; 1 credit per page.
 3. **Keenable**: a copy from Keenable's index; gets past cookie/consent walls; 100,000 requests/month free.
 
-**Why these three, in this order.** The choice comes from tests on 2026-10-09 comparing six providers (TinyFish, Firecrawl, Keenable, Parallel, Exa, Tavily): 15 pages with questions answered by three LLMs, and 23 German news articles with consent walls and paywalls. Full tables and data: [evaluation.md](evaluation.md).
-
-- TinyFish and Firecrawl were the only ones that never returned stale or wrong content.
-- Keenable solved the consent walls that defeat both live fetchers.
-- The chain reached 13 of 14 free articles, as many as all six providers together.
-- Parallel, Exa and Tavily brought no extra coverage (reasons and data: [evaluation.md](evaluation.md)).
+**Why these three, in this order:** tests on 2026-10-09 comparing six providers; reasoning and data in [evaluation.md](evaluation.md#decision).
 
 ## 2. Non-goals
 
@@ -132,11 +127,11 @@ Rules:
 - **V8** Both live fetches short: `[extract-chain] Very short page (<n> characters); a second live fetch (Firecrawl) was short as well.` n is the visible length of the returned text.
 - **V8a** Firecrawl short after a TinyFish failure: `[extract-chain] Very short page (<n> characters).`
 - **V9** Short page without second opinion: `[extract-chain] Very short page (<n> characters); no second opinion (<Firecrawl reason>).`
-- **V11** Bot-check page without alternative: `[extract-chain] This looks like a bot-check page; no other source had the page (<reasons>). The text below is what the site returned.` The reasons of all stages, joined with `; ` as in V5. If the kept page is Firecrawl's, V2 comes first. The result is no error.
 - **V10** Redirect: `[extract-chain] The site redirected to <final_url>; the text below is from that page.` The URL is reduced to one line and cut to 200 characters. It is added for the returned page of any stage, after the other notes, when the provider reports a `final_url` that points to another page than the requested URL:
   - the host differs after lowercasing and removing one leading `www.`, or
   - the requested path has at least one non-empty segment and the final path has none or only a locale-like single segment (`^[a-z]{2}(-[a-z]{2})?$`, case-insensitive, e.g. `/de/`, `/en-us/`).
   - No note for differences in scheme, trailing slash, query, fragment or letter case, for the same path, or when `final_url` is missing or not a string. V10 is a note only; it never changes the class or the stage order (D22).
+- **V11** Bot-check page without alternative: `[extract-chain] This looks like a bot-check page; no other source had the page (<reasons>). The text below is what the site returned.` The reasons of all stages, joined with `; ` as in V5. If the kept page is Firecrawl's, V2 comes first. The result is no error.
 
 ## 8. Provider calls (direct REST)
 
@@ -196,26 +191,9 @@ Rules:
 
 ## 12. Tests and acceptance
 
-- **T1** Unit tests (pytest, no network, `httpx.MockTransport`):
-  - every rule E1–E5, E7 and E8 with boundaries (499/500 and 1,499/1,500 visible characters, tags do not count, a long article with a bot-check phrase stays `ok`); no marker in two lists (E6);
-  - every branch K2–K4 with missing keys (K1, K3, K4), including `thin` and `challenge` at each stage and no Keenable call after a short live page (K3);
-  - the redirect note V10 with its cases (host, path to root or locale root, no note for `www.`, scheme, slash, query, case, missing or non-string `final_url`, cut at 200 characters, order of notes);
-  - at most one call per provider and URL (K5); concurrency across URLs (K6); pauses with a test clock (K7);
-  - order, count and duplicates (S5); ignored kwargs (S4); exceptions become errors (S6);
-  - website policy before and after redirects and with the policy module missing (S7); interrupts (S8);
-  - mapping of provider replies (A1–A3) including Firecrawl `statusCode`, the PDF cap, batch splitting and transport errors; notes V1–V10;
-  - `register(ctx)` and `plugin.yaml` (S1), with the same version as `pyproject.toml`; properties and `is_available` (S2); keys absent from results and logs (S3); log line format and codes (L1).
-- **T2** Replay of the chain on the stored raw results of the chain test (23 articles, all three providers per URL; data not published): at least 13 of 14 free articles complete; no paywall note on a free article from TinyFish text; every difference to the prototype explained.
-- **T3** Live check through Hermes' real `web_extract` path, without an LLM, in a throwaway profile:
-  - **Scope:** the 23 known articles, at least 20 new German news articles from other days and publishers (at least 5 paywalled), and special cases (a Stack Overflow question, a 404 page, a documentation page).
-  - **Rate:** at most 8 URLs/min per provider.
-  - **Acceptance:**
-    - every free article is complete or its failure explained;
-    - where the chain deviates from TinyFish, its result is at least as good;
-    - every Keenable result carries V4;
-    - every call stays under 120 s;
-    - multi-URL calls keep order and count;
-    - false alarms are counted.
+- **T1** Unit tests (pytest, `httpx.MockTransport`, no network). Every rule E, K, S and A has at least one test, boundaries included.
+- **T2** Replay of the chain on the stored raw results of the chain test (data not published): at least 13 of 14 free articles complete; no paywall note on a free article from TinyFish text; every difference to the prototype explained. Results: [validation.md](validation.md).
+- **T3** Live check through Hermes' real `web_extract` path, without an LLM, in a throwaway profile, at most 8 URLs/min per provider: the 23 known articles, at least 20 new German articles (at least 5 paywalled) plus special cases; where the chain deviates from TinyFish its result is at least as good; every call under 120 s; false alarms counted. Results: [validation.md](validation.md).
 - **T4** A review checks the result against this document.
 - **T5** `ruff check` and `ruff format --check` are clean; CI (GitHub Actions: ruff, pytest on Python 3.11 and 3.14) is green.
 
@@ -227,12 +205,10 @@ See also [troubleshooting.md](troubleshooting.md), section *Edge cases*.
 - The bot-check list (E7) and the length limits (E7, E8) are heuristics. A bot check in other words stays `ok` or `thin`; a real short page that mentions "captcha" or "access denied" is treated as a bot check and moves on to Firecrawl and Keenable. If they have nothing better, the page is still returned, with V11. A real short page costs one extra Firecrawl request (about 3.6 % of pages in the search test); its text still reaches the model when Firecrawl is short or fails (V8, V9).
 - Redirects are noted only (V10). A redirect to another page is not an error, and the chain does not fetch the requested page again.
 - Keenable copies may be older than the live page. The note says so; the age itself is unknown.
-- Marker rules are keyword rules tuned on German news sites. An article *about* paywalls or cookie consent can trigger a note.
-- Firecrawl free plan: 10 scrapes/min, 2 concurrent, 1,000 credits/month. It bills target 403/404 pages that come back as documents, and one credit per PDF page (capped at 30).
-- TinyFish: 1,000 successful URLs/day free, 150 URLs/min.
+- Marker rules are keyword rules tuned on German news sites. An article *about* paywalls or cookie consent can trigger a note, and English-language paywalls are mostly not detected.
 - A pause (K7) does not notice a top-up. After adding credits, the stage is used again when the pause ends or Hermes is restarted. The pauses rest on the providers' documentation; no real HTTP 402 was available for a test. Should a provider answer 402 for another reason than a used-up quota, the stage is paused all the same: for example for one request that costs more than the credits left (a long PDF) although cheaper requests would still work, or by passing on the status of a target page (neither seen nor documented).
 - Hermes caches successful results with their notes for `web.cache_ttl_minutes` (default 20), including a consent page returned with V5.
-- Every URL is sent to TinyFish, and possibly to Firecrawl and Keenable (privacy).
+- Every URL is sent to TinyFish, and possibly to Firecrawl and Keenable (privacy). Hermes refuses URLs that contain secrets before any provider sees them.
 - Providers and their order are fixed; see the README FAQ.
 - The plugin imports two modules from inside Hermes, `agent.web_search_provider` and `tools.website_policy`. If a Hermes update moves either, `web_extract` fails with a clear error until the plugin is updated: without the first the plugin does not load, without the second it refuses every URL (S7).
 
