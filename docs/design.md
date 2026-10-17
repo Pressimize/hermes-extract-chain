@@ -106,7 +106,7 @@ Checks run in this order; the first match wins: E1, E2, E7, E3, E4, E8, E5. The 
 Rules:
 
 - **E1** `error`: the result has an error text.
-- **E2** `empty`: fewer than 20 characters remain after removing HTML tags and stripping whitespace. Firecrawl's empty `<body></body>` counts as empty.
+- **E2** `empty`: fewer than 20 characters remain after removing HTML tags and stripping whitespace. Firecrawl's empty `<body></body>` counts as empty. A tag is `<`, an optional `/`, a tag name (a letter, then letters, digits or `-`), then whitespace with attributes, `/` or directly `>`; a comment or doctype is `<!…>`. Neither contains a further `<`. So `a < b … c > d` and `i<n; … p->next` in an article are text, not tags.
 - **E7** `challenge`: the visible text (as in E2) is shorter than `CHALLENGE_BELOW` = 1,500 characters and contains at least one marker of the list `CHALLENGE` (bot-check phrases such as "not a robot", "verify you are human", "checking your browser", "captcha", "access denied"; case-insensitive). The length cap keeps real articles that mention these phrases out of the class. Providers return bot checks with status 200, so the text decides (D21). Checked after E2 and before E3.
 - **E3** `wall`: at least 2 different wall markers occur in the check area. The check area is the raw `content` (Markdown or HTML, uncleaned): the whole text below 4,000 characters, otherwise the first 2,000 characters.
   - A real consent wall replaces the content: it stands at the beginning, or the page is short (derStandard via TinyFish: 992 characters, wall text at the end).
@@ -151,7 +151,7 @@ Rules:
   - `POST https://api.firecrawl.dev/v2/scrape` with `Authorization: Bearer <key>`; body `{"url", "formats": ["markdown"], "onlyMainContent": true, "maxAge": 3600000, "timeout": 30000, "parsers": [{"type": "pdf", "maxPages": 30}]}`.
   - Success means `success: true`; the text is `data.markdown` (a missing or empty one counts as an empty page, E2), the title comes from `data.metadata.title`, the final URL from `data.metadata.url`.
   - A target status (`data.metadata.statusCode`) outside 200–299 and not 304 becomes `target HTTP <status>`. Firecrawl otherwise returns such pages without an error field, and still bills them.
-  - An API error becomes `API <status>: <error>`.
+  - An API error becomes `API <status>: <error>`. A successful reply whose `data` or `data.metadata` is no JSON object is `Firecrawl: malformed reply` (code `malformed`).
   - PDFs are capped at 30 pages, because Firecrawl bills one credit per PDF page. If `metadata.totalPages` exceeds `metadata.numPages`, the result gets note V7.
 - **A3** Keenable:
   - `GET https://api.keenable.ai/v1/fetch?url=...` with `Authorization: Bearer <key>` and `X-Keenable-Title: hermes-extract-chain`.

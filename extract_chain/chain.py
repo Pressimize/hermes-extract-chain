@@ -65,7 +65,9 @@ CHALLENGE = [
     "access denied", "request blocked", "unusual traffic",
 ]  # fmt: skip
 
-_TAGS = re.compile(r"<[^>]*>")
+# E2: a tag name followed by whitespace, "/" or ">", or a comment or doctype; none holds a "<". So "a < b ... c > d"
+# and "i<n; ... p->next" in an article stay text, and the match stays linear.
+_TAGS = re.compile(r"</?[a-z][a-z0-9-]*(?:\s[^<>]*)?/?>|<![^<>]*>", re.IGNORECASE)
 _WALL_RX = [re.compile(m, re.IGNORECASE) for m in WALL]
 _PAYWALL_DEFINITE_RX = [re.compile(m, re.IGNORECASE) for m in PAYWALL_DEFINITE]
 _PAYWALL_RX = [re.compile(m, re.IGNORECASE) for m in PAYWALL]

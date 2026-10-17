@@ -249,6 +249,16 @@ def test_keenable_errors(reply, expected):
     assert out.get("status") == (reply.status_code if reply.status_code >= 300 else None)  # read by K7
 
 
+@pytest.mark.parametrize(
+    "data",
+    ["markdown text", [{"markdown": "x"}], {"markdown": "x" * 600, "metadata": "nope"}],
+)
+def test_firecrawl_data_that_is_no_object_is_malformed(data):  # N02: was "Firecrawl: AttributeError"
+    reply = httpx.Response(200, json={"success": True, "data": data})
+    out = call(fetchers.firecrawl, lambda r: reply, "u", "k")
+    assert out == {"error": "Firecrawl: malformed reply", "code": "malformed"}
+
+
 def test_error_detail_truncated():
     out = call(fetchers.keenable, lambda r: httpx.Response(500, text="x" * 500), "u", "k")
     assert out["error"] == "Keenable: " + "x" * 200

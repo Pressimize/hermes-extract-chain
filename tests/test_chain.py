@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 
 import pytest
 
@@ -87,6 +88,23 @@ def test_classify(content, error, expected):
 )
 def test_classify_challenge_and_thin(content, expected):  # E7, E8
     assert classify(doc(content)) == expected
+
+
+def test_less_than_sign_is_no_tag():  # E2: only HTML tags are removed, not text between "<" and a later ">" (N01)
+    assert classify(doc("Wenn x < 10 ist, " + ARTICLE + " gilt x -> y.")) == "ok"
+    code = "Der Ausdruck `a < b` ist wahr, wenn a kleiner ist.\n\n" + ARTICLE + "\n\n```\n>>> 1 < 2\nTrue\n```\n"
+    assert classify(doc(code)) == "ok"
+    assert classify(doc("<p>" + ARTICLE + "</p><br/><!-- c --><div class='a'></div>")) == "ok"
+    assert classify(doc("<p class='x'> " + "y" * 10 + " </p>")) == "empty"  # tags with attributes still count as tags
+    assert classify(doc("<p\nclass='x'>" + "y" * 10 + "</p><!DOCTYPE html>")) == "empty"
+    assert classify(doc("for (i = 0; i<n; i++) " + ARTICLE + " p->next")) == "ok"  # "<n;" opens no tag
+    assert classify(doc("List<String> " + ARTICLE)) == "ok"
+
+
+def test_many_less_than_signs_classify_in_linear_time():  # N01: the tag pattern backtracked quadratically
+    start = time.perf_counter()
+    assert classify(doc("a<b " * 80_000), full_page=True) == "ok"  # took about 13 s before
+    assert time.perf_counter() - start < 2
 
 
 def test_challenge_wins_over_wall():  # E7 before E3
