@@ -30,3 +30,7 @@ Vom Skript geschrieben, zaehlt fuer die Rotation mit.
 | muse-spark-1.3-contributor-free | 2026-10-17 | Fehler rc=1 | 5s |
 | glm-5.3-flash-free | 2026-10-17 | Timeout | 900s |
 | mimo-v2.6-flash-free | 2026-10-17 | Timeout | 901s |
+| mimo-v2.6-flash-free | 2026-10-17 | Timeout | 901s |
+| mimo-v2.6-flash-free | 2026-10-17 | Timeout | 901s |
+| longcat-2.5-preview-free | 2026-10-17 | Fehler rc=0 | 591s |
+| big-pickle | 2026-10-17 | Timeout | 900s |
