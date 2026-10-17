@@ -151,7 +151,7 @@ Rules:
   - `POST https://api.firecrawl.dev/v2/scrape` with `Authorization: Bearer <key>`; body `{"url", "formats": ["markdown"], "onlyMainContent": true, "maxAge": 3600000, "timeout": 30000, "parsers": [{"type": "pdf", "maxPages": 30}]}`.
   - Success means `success: true`; the text is `data.markdown` (a missing or empty one counts as an empty page, E2), the title comes from `data.metadata.title`, the final URL from `data.metadata.url`.
   - A target status (`data.metadata.statusCode`) outside 200–299 and not 304 becomes `target HTTP <status>`. Firecrawl otherwise returns such pages without an error field, and still bills them.
-  - An API error becomes `API <status>: <error>`.
+  - An API error becomes `API <status>: <error>`. A successful reply whose `data` or `data.metadata` is no JSON object is `Firecrawl: malformed reply` (code `malformed`).
   - PDFs are capped at 30 pages, because Firecrawl bills one credit per PDF page. If `metadata.totalPages` exceeds `metadata.numPages`, the result gets note V7.
 - **A3** Keenable:
   - `GET https://api.keenable.ai/v1/fetch?url=...` with `Authorization: Bearer <key>` and `X-Keenable-Title: hermes-extract-chain`.

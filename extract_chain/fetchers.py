@@ -150,8 +150,10 @@ async def firecrawl(client: httpx.AsyncClient, url: str, key: str) -> dict:
         if response.status_code >= 300 or not payload.get("success"):
             detail = f"API {response.status_code}: {payload.get('error') or response.text}"
             return _error("Firecrawl", detail, f"api_{response.status_code}", key, response.status_code)
-        data = payload.get("data") or {}
-        meta = data.get("metadata") or {}
+        data = payload.get("data") or {}  # no data at all: an empty page (E2)
+        meta = (data.get("metadata") or {}) if isinstance(data, dict) else None
+        if not isinstance(meta, dict):  # data or metadata that is no object cannot be read
+            return _error("Firecrawl", "malformed reply", "malformed")
         status = meta.get("statusCode")
         if isinstance(status, int) and not (200 <= status < 300 or status == 304):
             return _error("Firecrawl", f"target HTTP {status}", f"target_{status}")

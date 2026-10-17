@@ -5,6 +5,7 @@
 Fixes from the overnight review (`docs/nachtlauf/`). No change to the interface, the notes or the order of providers.
 
 - A `<` in the text (`x < 10`, `>>> 1 < 2`) no longer swallows everything up to the next `>` when the visible length is measured. A programming article could be classified as `empty` or `thin` before and was replaced by Firecrawl or Keenable. The tag pattern is also linear now; a page with many `<` and no `>` took seconds of CPU before (N01).
+- A Firecrawl reply whose `data` or `metadata` is no object gives `Firecrawl: malformed reply` (code `malformed`) instead of `Firecrawl: AttributeError`, as TinyFish and Keenable already do (N02).
 
 ## 0.2.5 – 2026-10-12
 
