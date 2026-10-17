@@ -1,7 +1,0 @@
-- Bug/Robustheit, `provider.py:121,133`: `urls` wird mehrfach iteriert; bei einem Generator ist `unique` noch befüllt, das abschließende Return aber leer. Fix: `urls = list(urls)` zu Beginn von `extract`.
-- Bug/Robustheit, `provider.py:160`: `result["metadata"].get("finalURL")` wirft, wenn ein Fetcher kein `metadata` liefert; dann scheitert der ganze `_chain`-Aufruf. Fix: `(result.get("metadata") or {}).get("finalURL")`.
-- Bug/Robustheit, `provider.py:151`: `first[url]` setzt voraus, dass TinyFish für jede URL ein Dokument liefert; fehlt eine, bricht die ganze Batch. Fix: sicheren Zugriff mit Fallback-Fehlerdokument.
-- Bug/Robustheit, `provider.py:191-192`: `doc["error"]` und `doc["code"]` werden bei HTTP 402 direkt indiziert; fehlende Felder werfen `KeyError`. Fix: `.get(...)` mit sinnvollem Fallback.
-- Edge Case, `provider.py:162`: `final and final != url` lässt truthy Nicht-Strings durch; `_blocked` ruft dann `check_website_access` mit einem Nicht-String auf. Fix: `isinstance(final, str) and final != url`.
-- Stil/UX, `provider.py:67`: bei genau 3600 s wird der Minuten-Zweig genommen (`60 min` statt `1 h`), bei 3601 s durch `ceil` sofort `2 h`. Fix: Schwelle auf `>= 3600` und konsistente Rundung.
-- Security (Defense-in-Depth), `provider.py:191`: der Pausengrund speichert `doc["error"]` unverändert; enthält ein Provider-Fehler den Key, landet er in `_paused` und in späteren Antworten/Logs. Fix: Key im Grund vor dem Speichern ersetzen.

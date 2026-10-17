@@ -96,6 +96,9 @@ def test_less_than_sign_is_no_tag():  # E2: only HTML tags are removed, not text
     assert classify(doc(code)) == "ok"
     assert classify(doc("<p>" + ARTICLE + "</p><br/><!-- c --><div class='a'></div>")) == "ok"
     assert classify(doc("<p class='x'> " + "y" * 10 + " </p>")) == "empty"  # tags with attributes still count as tags
+    assert classify(doc("<p\nclass='x'>" + "y" * 10 + "</p><!DOCTYPE html>")) == "empty"
+    assert classify(doc("for (i = 0; i<n; i++) " + ARTICLE + " p->next")) == "ok"  # "<n;" opens no tag
+    assert classify(doc("List<String> " + ARTICLE)) == "ok"
 
 
 def test_many_less_than_signs_classify_in_linear_time():  # N01: the tag pattern backtracked quadratically
