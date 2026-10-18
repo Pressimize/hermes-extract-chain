@@ -1,6 +1,6 @@
 # Evaluation: how the providers were chosen
 
-The chain of v0.3.0, Bright Data → Jina → Firecrawl → Tavily → Keenable, comes from web benchmark v2 (next section). The chain TinyFish → Firecrawl → Keenable of v0.1–v0.2 was the result of three tests run on 2026-10-09 with Hermes Agent 0.21.6, kept below as history:
+The chain of v0.3.0, Jina → Bright Data → Firecrawl → Keenable, comes from web benchmark v2 and a second, harder set of pages (next section). The chain TinyFish → Firecrawl → Keenable of v0.1–v0.2 was the result of three tests run on 2026-10-09 with Hermes Agent 0.21.6, kept below as history:
 
 1. **Extraction test**: six providers, 15 pages, a question per page answered by three LLMs. It shows which providers deliver correct and current content.
 2. **Chain test**: the same six providers on 23 German news articles, without an LLM. It shows who gets past consent walls and paywalls, and what a chain can reach.
@@ -10,7 +10,7 @@ The URL lists and per-URL results of these tests are in [`data/`](../data); arti
 
 ## Web benchmark v2 (2026-10-17/18)
 
-The basis of the v0.3.0 chain and of decisions D26–D33 in [design.md](design.md#14-decisions).
+The basis of the v0.3.0 chain and of decisions D26–D34 in [design.md](design.md#14-decisions).
 
 **Setup**
 
@@ -21,7 +21,49 @@ The basis of the v0.3.0 chain and of decisions D26–D33 in [design.md](design.m
 
 **Results**
 
-*Numbers pending publication approval.*
+Two sets of pages:
+
+- **Set 1:** 132 pages with a ground truth: international and German bot protection, page types (forums, products, lists, docs), freshness, hard-to-load pages, paywalls and consent walls.
+- **Set 2:** 197 harder pages, 71 of them job pages.
+
+Self-hosted setups ran from a home connection, the cloud services from their own networks.
+
+Complete single results:
+
+| Provider | Set 1 (132) | Set 2 (197) |
+|---|---|---|
+| Camoufox, own script (self-hosted browser) | 111 (Windows) / 103 (Linux) | 180 (Linux) |
+| Firecrawl | 95 (of 131) | measured on 74 hard pages only |
+| Bright Data Web Unlocker | 90 | 129 |
+| Jina Reader | 87 | 160 |
+| Tavily Extract | 87 | 154 |
+| Exa, Parallel | 87 each | not measured (kept for search) |
+| DonSeTch (self-hosted) | 87 | 143 |
+| Keenable | 85 | 129 |
+| Crawl4AI (self-hosted) | 78 | 136 |
+| TinyFish | 71 | 133 |
+
+Chains, computed with the plugin's own `run_chain` on the stored results ([validation.md](validation.md#v030)):
+
+| Chain | Set 1: complete / wrong | Set 2: complete / wrong |
+|---|---|---|
+| **Jina → Bright Data → Firecrawl → Keenable** (default) | **116 / 8** | **170 / 19** |
+| Bright Data → Jina → Firecrawl → Tavily → Keenable | 118 / 5 | 160 / 30 |
+| TinyFish → Firecrawl → Keenable (v0.1–v0.2) | 100 of 131 | 146 / 45 |
+
+**Findings**
+
+- **The first stage decides most.** On set 2, 31 of the 37 incomplete pages of the chain with Bright Data first ended at Bright Data. Most of these failures were silent: partial text that looked fine.
+- **Detection matters more than more stages.** A fourth or fifth stage added 0–2 pages. The checks C1–C5, above all the length comparison with Keenable's copy, added more.
+- **TinyFish**:
+  - Complete on 85 % of easy pages and 4 % of hard ones.
+  - Many silent failures: excerpts of the wrong part of the page.
+  - It is no longer part of the chain.
+- **Tavily** changed no result in either set. On set 2 only 38 % of its failures were recognisable, most of them as a bare "Failed to fetch url". It is optional.
+- **Keenable** reports its failures worst; most of them are old or different copies. It therefore stays the last stage and serves as the reference.
+- **Self-hosted browsers:** a Camoufox stage first would add about 16 complete pages over both sets (302 against 286 of 329). It needs a separate host with open egress and is not part of v0.3.0.
+
+Failure reporting per provider (both sets, failure = not complete): Crawl4AI names the protection it hit; TinyFish and DonSeTch return error codes. Bright Data reports the target's status, often 502. Jina reports only in a warning line of its text. Tavily reports without a reason. Keenable rarely reports at all, and the browsers never do.
 
 ## Test 1 – Extraction test with questions
 

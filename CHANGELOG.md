@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 – unreleased
+## 0.3.0 – 2026-10-19
 
 A new chain of four services, Jina → Bright Data → Firecrawl → Keenable, with checks of every result against Keenable's copy. Tavily Extract is optional: it runs only if `EXTRACT_CHAIN_ORDER` names it. From web benchmark v2 (2026-10-17/18) and a second, harder set; results on their stored data in `docs/validation.md`.
 

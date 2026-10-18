@@ -13,7 +13,7 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.2.4:** unit tests, replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
 - **v0.2.5:** unit tests and stored data (section *v0.2.5: stored data*). Unlike the releases before, the classification changes results.
 - **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 are now killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
-- **v0.3.0:** unit tests; replay on the data of web benchmark v2, two sets (section *v0.3.0*); live check pending.
+- **v0.3.0:** unit tests; replay on the data of web benchmark v2, two sets (section *v0.3.0*); live check of 20 pages on 2026-10-19.
 
 ## T1 – Unit tests
 
@@ -44,7 +44,33 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 
 ### T3 – Live check
 
-Pending: 20 pages from the benchmark through Hermes' real `web_extract` path in a throwaway profile with `web.extract_timeout: 180` (design T3).
+On 2026-10-19, `scripts/live_check.py` sent 20 benchmark pages through Hermes' real `web_extract` path. The setup:
+
+- A throwaway Hermes Desktop profile (hermes-agent v0.21.6-133-gaa74e184) with the default order.
+- `web.extract_timeout: 180` and `web.keyless_rescue: false`.
+- Keys for Bright Data, Jina, Firecrawl and Keenable; no Tavily key.
+- 18 single calls and one call with three URLs.
+
+The pages were picked from both sets so that every path of the default order occurs at least once in the replay. This chose 6 pages where Jina passes, 4 where Bright Data answers after Jina, 3 for Firecrawl and 3 for Keenable's copy. It also chose one page each for the paywall note, the longest-result fallback and the bot-check fallback.
+
+**Result: T3 accepted.**
+
+- **Time:** All calls stayed below 180 s. The slowest took 44 s (Jina bot check, then Bright Data), the median was about 10 s.
+- **Rate:** At most 5 requests per minute per provider.
+- **No key** appeared in the output or the log lines.
+- **Paths:**
+  - **Jina:** 10 pages, one of them with the paywall note.
+  - **Bright Data:** 3 pages, after a consent wall or bot check from Jina.
+  - **Firecrawl:** 3 pages, after Bright Data failed with `brd_policy_20050`, `brd_forbidden` or a wall.
+  - **Keenable:** 3 copies with note N17. One followed 403 from Jina and Firecrawl and `brd_http_status` from Bright Data; that is no page-gone stop, because N6 counts only 404 and 410.
+  - **Bot-check fallback (V11):** on one job board every stage returned the bot check and Keenable returned 403. The bot-check page came back with its note.
+- **Against the replay:** 6 pages took another path live than in the stored data, because the sites answered differently a day later.
+  - 3 times an earlier stage now passed: Jina twice, where it had failed before, and Bright Data once.
+  - Once Jina passed the checks where the replay had fallen back to the longest result.
+  - Once Firecrawl passed a page that ended at Keenable in the replay.
+  - Once all live stages returned 403 where Bright Data had returned a paywalled text.
+  - Every note matched its result.
+- **Bright Data errors** arrive with their codes (`brd_policy_20050`, `brd_forbidden`, `brd_http_status`) and the chain moves on, as A6 requires.
 
 ## T2 – Replay on the chain-test data (history)
 

@@ -13,7 +13,7 @@ This plugin registers its own extract provider that chains four services per URL
 3. **Firecrawl**: live, with a browser and proxies; 1 credit per page.
 4. **Keenable**: a copy from Keenable's index; gets past cookie/consent walls; 100,000 requests/month free. It is asked for every URL at the start, in parallel, and its copy is also the reference that the other results are checked against (K3, C5).
 
-**Tavily Extract** (a copy from Tavily's service; reports its failures well) is not in the default order. It runs, before Keenable, only if `EXTRACT_CHAIN_ORDER` names it (K1, D34).
+**Tavily Extract** (a copy from Tavily's service) is not in the default order. It runs, before Keenable, only if `EXTRACT_CHAIN_ORDER` names it (K1, D34).
 
 The aim is as many complete results as possible; saving credits comes second. Escalating once too often costs requests, escalating once too rarely costs a result (D29).
 
