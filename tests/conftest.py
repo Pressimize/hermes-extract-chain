@@ -6,6 +6,7 @@ import types
 import pytest
 
 ENV: dict[str, str] = {}
+WEB: dict[str, object] = {}
 
 
 class WebSearchProvider:
@@ -17,6 +18,14 @@ def get_provider_env(name: str) -> str:
     if isinstance(value, Exception):
         raise value
     return value
+
+
+def _load_web_config() -> dict:
+    """Hermes' web section of config.yaml (N9); a test sets WEB["config"] to a dict or to an exception."""
+    config = WEB["config"]
+    if isinstance(config, Exception):
+        raise config
+    return config
 
 
 _module = types.ModuleType("agent.web_search_provider")
@@ -31,13 +40,35 @@ _policy.check_website_access = lambda url: None
 sys.modules.setdefault("tools", types.ModuleType("tools"))
 sys.modules["tools.website_policy"] = _policy
 
-KEYS = {"TINYFISH_API_KEY": "tf-SECRET", "FIRECRAWL_API_KEY": "fc-SECRET", "KEENABLE_API_KEY": "ke-SECRET"}
+_web = types.ModuleType("tools.web_tools")
+_web._load_web_config = _load_web_config
+sys.modules["tools.web_tools"] = _web
+
+ALL_STAGES = "brightdata,jina,firecrawl,tavily,keenable"
+KEYS = {
+    "BRIGHTDATA_API_KEY": "bd-SECRET",
+    "BRIGHTDATA_UNLOCKER_ZONE": "unlocker1",
+    "JINA_API_KEY": "jn-SECRET",
+    "FIRECRAWL_API_KEY": "fc-SECRET",
+    "TAVILY_API_KEY": "tv-SECRET",
+    "KEENABLE_API_KEY": "ke-SECRET",
+}
 
 
 @pytest.fixture
 def env():
-    """All three keys set; tests may delete or replace entries."""
+    """All keys and the Bright Data zone set, and all five stages in the order the tests were written for
+    (the default order leaves Tavily out and starts with Jina, N2); tests may delete or replace entries."""
     ENV.clear()
     ENV.update(KEYS)
+    ENV["EXTRACT_CHAIN_ORDER"] = ALL_STAGES
     yield ENV
     ENV.clear()
+
+
+@pytest.fixture(autouse=True)
+def web_config():
+    """web.extract_timeout 180 (I2), i.e. 170 s per URL; tests may set WEB["config"]."""
+    WEB["config"] = {"extract_timeout": 180}
+    yield WEB
+    WEB["config"] = {"extract_timeout": 180}

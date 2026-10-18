@@ -1,25 +1,49 @@
-"""Classification, fallback chain and notes (design sections 5-7 and 11)."""
+"""Classification, checks, fallback chain and notes (design sections 5-7 and 11)."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 log = logging.getLogger(__name__)
 
-Fetch = Callable[[], Awaitable[dict]]
+Fetch = Callable[[float], Awaitable[dict]]  # takes the time it may use, in seconds
 
 EMPTY_BELOW = 20  # E2: visible characters once HTML tags are removed
 CHALLENGE_BELOW = 1500  # E7: bot-check markers count only in texts shorter than this (visible characters)
-THIN_BELOW = 500  # E8: visible characters; a shorter text asks for a second opinion
+THIN_BELOW = 500  # E8 / N7.1: visible characters; a shorter text is a reason to ask the next stage
 WALL_WINDOW = 2000  # E3: start of longer texts
 WHOLE_BELOW = 4000  # E3/E4: shorter texts are checked completely
-FULL_PAGE_PAYWALL_SHARE = 0.75  # E4: full pages (Firecrawl) end with footer and subscription dialogs
-FINAL_TINYFISH_CODES = frozenset(
-    {"page_not_found", "login_required", "invalid_url", "invalid_redirect_url", "content_too_large"}
-)
+FULL_PAGE_PAYWALL_SHARE = 0.75  # E4: full pages end with footer and subscription dialogs
+
+# N7: checks of a result that looks fine to classify(); measured in the benchmark of 2026-10-18.
+PRINT_WINDOW = 5000  # N7.2: print-view markers count in the first characters only
+CHECK_BELOW = 3000  # N7.3: JavaScript and bot-check hints count only in texts shorter than this
+CONSENT_BELOW = 1500  # N7.4
+CONSENT_MIN = 2  # N7.4: occurrences, not different markers
+REFERENCE_FACTOR = 1.5  # N7.5: Keenable's copy at least this many times longer -> suspect
+SUSPECT_PRINT = ["dieser ausdruck wurde am", "ausdruck erstellt"]
+SUSPECT_JS = [
+    "turn on javascript", "enable javascript", r"javascript (is )?(disabled|required)", "aktivieren sie javascript",
+]  # fmt: skip
+SUSPECT_CHECK = [
+    "just a moment", "nur einen moment", "verify you are human", "captcha", "access denied",
+    "pardon our interruption", "zugriff verweigert", "sicherheitsüberprüfung", "security check",
+    "checking your browser",
+]  # fmt: skip
+SUSPECT_CONSENT = r"cookie|consent|zustimm|einwillig"
+
+# N9: time budget of one URL; a stage with less time left is skipped.
+URL_BUDGET_MAX = 170.0
+MIN_STAGE = 10.0
+GONE_STATUS = frozenset({404, 410})  # N6: two live stages agree that the page is gone
+GONE_MIN = 2
+COPY_STAGES = frozenset({"tavily", "keenable"})  # N17: copies that may be older than the live page
 
 # E6: marker lists from the chain test prototype (2026-10-09).
 WALL = [
@@ -37,25 +61,6 @@ PAYWALL = [
     "artikel freischalten", "anmelden und weiterlesen", r"spiegel\+", r"(?<!\w)z\+", r"(?<!\w)f\+",
     "sz plus", r"heise\+", "weltplus", "paywall",
 ]  # fmt: skip
-
-NOTE_FIRECRAWL = "[extract-chain] Live fetch via Firecrawl ({reason})."
-NOTE_THIN_BOTH = "[extract-chain] Very short page ({n} characters); a second live fetch (Firecrawl) was short as well."
-NOTE_THIN = "[extract-chain] Very short page ({n} characters)."
-NOTE_THIN_ALONE = "[extract-chain] Very short page ({n} characters); no second opinion ({reason})."
-NOTE_REDIRECT = "[extract-chain] The site redirected to {final}; the text below is from that page."
-NOTE_CHECK = (
-    "[extract-chain] This looks like a bot-check page; no other source had the page ({reasons}). "
-    "The text below is what the site returned."
-)
-NOTE_PAYWALL = "[extract-chain] Paywall indicators found; the text is probably only the free teaser."
-NOTE_KEENABLE = (
-    "[extract-chain] Copy from Keenable's index; it may be older than the live page (live fetch: {reasons})."
-)
-NOTE_WALL = (
-    "[extract-chain] Consent wall detected; no alternative source found ({reasons}). "
-    "The text below is the consent page."
-)
-NOTE_PDF = "[extract-chain] PDF cut to the first {shown} of {total} pages (Firecrawl page cap)."
 # E7: bot-check phrases from the job-board measurement (2026-10-12); apostrophes are avoided on purpose.
 CHALLENGE = [
     "not a robot", "are you a robot", r"verif(y|ying) (that )?you are human", "checking your browser",
@@ -65,6 +70,24 @@ CHALLENGE = [
     "access denied", "request blocked", "unusual traffic",
 ]  # fmt: skip
 
+NOTE_LIVE = "[extract-chain] Live fetch via {provider} ({reasons})."
+NOTE_COPY = "[extract-chain] Copy via {provider}; it may be older than the live page ({reasons})."
+NOTE_GONE = "[extract-chain] The live page returned HTTP {status}; this is an older copy from Keenable's index."
+NOTE_LONGEST = (
+    "[extract-chain] No source passed the checks; this is the longest result ({provider}, {n} characters; {reasons})."
+)
+NOTE_REDIRECT = "[extract-chain] The site redirected to {final}; the text below is from that page."
+NOTE_CHECK = (
+    "[extract-chain] This looks like a bot-check page; no other source had the page ({reasons}). "
+    "The text below is what the site returned."
+)
+NOTE_PAYWALL = "[extract-chain] Paywall indicators found; the text is probably only the free teaser."
+NOTE_WALL = (
+    "[extract-chain] Consent wall detected; no alternative source found ({reasons}). "
+    "The text below is the consent page."
+)
+NOTE_PDF = "[extract-chain] PDF cut to the first {shown} of {total} pages (Firecrawl page cap)."
+
 # E2: a tag name followed by whitespace, "/" or ">", or a comment or doctype; none holds a "<". So "a < b ... c > d"
 # and "i<n; ... p->next" in an article stay text, and the match stays linear.
 _TAGS = re.compile(r"</?[a-z][a-z0-9-]*(?:\s[^<>]*)?/?>|<![^<>]*>", re.IGNORECASE)
@@ -72,8 +95,28 @@ _WALL_RX = [re.compile(m, re.IGNORECASE) for m in WALL]
 _PAYWALL_DEFINITE_RX = [re.compile(m, re.IGNORECASE) for m in PAYWALL_DEFINITE]
 _PAYWALL_RX = [re.compile(m, re.IGNORECASE) for m in PAYWALL]
 _CHALLENGE_RX = [re.compile(m, re.IGNORECASE) for m in CHALLENGE]
+_PRINT_RX = [re.compile(m, re.IGNORECASE) for m in SUSPECT_PRINT]
+_HINT_RX = [re.compile(m, re.IGNORECASE) for m in SUSPECT_JS + SUSPECT_CHECK]
+_CONSENT_RX = re.compile(SUSPECT_CONSENT, re.IGNORECASE)
 _LOCALE = re.compile(r"[a-z]{2}(-[a-z]{2})?", re.IGNORECASE)  # V10: a path like /de/ or /en-us/
 _KIND_TEXT = {"empty": "empty page", "wall": "consent wall", "challenge": "bot check page"}
+_SUSPECT_TEXT = {
+    "print": "print view",
+    "check": "JavaScript or bot-check hint",
+    "consent": "consent text",
+    "shorter": "shorter than the reference copy",
+}
+
+
+@dataclass(frozen=True)
+class Stage:
+    """One stage of the chain. fetch is None when the stage cannot run (N3); missing then says why."""
+
+    id: str  # brightdata, jina, firecrawl, tavily (log line, N2)
+    name: str  # Bright Data, Jina, Firecrawl, Tavily (reasons and notes)
+    fetch: Fetch | None
+    full_page: bool = True  # E4: all live providers and Tavily return the whole page
+    missing: str = "no API key"
 
 
 def _hits(patterns: list[re.Pattern[str]], text: str) -> int:
@@ -86,7 +129,7 @@ def _visible(doc: dict) -> str:
 
 
 def classify(doc: dict, full_page: bool = False) -> str:
-    """E1-E8: 'error', 'empty', 'challenge', 'wall', 'paywall', 'thin' or 'ok'. full_page: whole page (Firecrawl)."""
+    """E1-E8: 'error', 'empty', 'challenge', 'wall', 'paywall', 'thin' or 'ok'. full_page: whole page."""
     if doc.get("error"):
         return "error"
     text = doc.get("content") or ""
@@ -102,6 +145,24 @@ def classify(doc: dict, full_page: bool = False) -> str:
     if _hits(_PAYWALL_DEFINITE_RX, area) or _hits(_PAYWALL_RX, area) >= 2:
         return "paywall"
     return "thin" if len(visible) < THIN_BELOW else "ok"
+
+
+def suspect(doc: dict, reference_len: int | None) -> str | None:
+    """N7: why a result that classify() calls ok or thin is not taken yet, or None. The first rule that applies
+    wins. reference_len: visible length of Keenable's copy, None without one (and for Keenable itself)."""
+    visible = _visible(doc)
+    n = len(visible)
+    if n < THIN_BELOW:
+        return "thin"
+    if _hits(_PRINT_RX, visible[:PRINT_WINDOW]):
+        return "print"
+    if n < CHECK_BELOW and _hits(_HINT_RX, visible):
+        return "check"
+    if n < CONSENT_BELOW and len(_CONSENT_RX.findall(visible)) >= CONSENT_MIN:
+        return "consent"
+    if reference_len is not None and reference_len >= REFERENCE_FACTOR * max(1, n):
+        return "shorter"
+    return None
 
 
 def _redirect(url: str, final: object) -> bool:
@@ -150,76 +211,174 @@ def _host(url: str) -> str:
 
 
 def _reason(provider: str, doc: dict, kind: str) -> str:
+    """Why a stage was passed over: its error, its class (E2-E8) or the check that applied (N7, N17)."""
     if kind == "thin":
         return f"{provider}: very short page ({len(_visible(doc))} characters)"
+    if kind in _SUSPECT_TEXT:
+        return f"{provider}: {_SUSPECT_TEXT[kind]}"
     return doc["error"] if kind == "error" else f"{provider}: {_KIND_TEXT[kind]}"
 
 
-async def _call(provider: str, fetch: Fetch | None) -> dict:
-    if fetch is None:
-        return {"error": f"{provider}: no API key", "code": "no_key"}
+async def _call(provider: str, fetch: Fetch, deadline: float) -> dict:
     try:
-        return await fetch()
+        return await fetch(deadline)
     except Exception as exc:  # S6: an unexpected failure only fails this stage
         return {"error": f"{provider}: {type(exc).__name__}", "code": "exception"}
 
 
-async def run_chain(url: str, tinyfish: dict, firecrawl: Fetch | None, keenable: Fetch | None) -> dict:
-    """K2-K5 for one URL, starting from TinyFish's result. Returns the Hermes result entry."""
-    steps: list[str] = []
+def _source(stage_id: str, provider: str, reasons: list[str]) -> tuple[str, ...]:
+    """N17: where the text comes from, when an earlier stage was passed over."""
+    if not reasons:
+        return ()
+    note = NOTE_COPY if stage_id in COPY_STAGES else NOTE_LIVE
+    return (note.format(provider=provider, reasons="; ".join(reasons)),)
 
-    def step(name: str, doc: dict) -> str:
-        kind = classify(doc, full_page=name == "firecrawl")
-        steps.append(f"{name}={doc.get('code') or kind}")
-        return kind
+
+async def run_chain(
+    url: str,
+    stages: list[Stage],
+    reference: asyncio.Task | None,
+    *,
+    budget: float,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict:
+    """N5-N9 for one URL. stages: the live stages and Tavily in order; reference: the running Keenable request, which
+    is the reference for N7.5 and the last stage. Returns the Hermes result entry. Never raises (S6)."""
+    start = clock()
+    steps: list[str] = []
+    reasons: list[str] = []
+    kept: list[tuple[bool, int, int, str, str, dict]] = []  # (no check hint, length, -position, id, name, doc)
+    wall: dict | None = None
+    check: dict | None = None
+    gone: list[int] = []
+    firecrawl_asked = False
+    reference_len: int | None = None
+    waited = False
+    interrupted = False
+
+    def left() -> float:
+        return budget - (clock() - start)
+
+    async def keenable_doc(wait: float) -> dict | None:
+        """The Keenable result, waiting at most wait seconds; None without a request or when it is not ready."""
+        if reference is None:
+            return None
+        if not reference.done() and wait > 0:
+            await asyncio.wait({reference}, timeout=wait)
+        if not reference.done() or reference.cancelled():
+            return None
+        try:
+            return reference.result()
+        except Exception as exc:  # S6
+            return {"error": f"Keenable: {type(exc).__name__}", "code": "exception"}
 
     try:
-        kind = step("tinyfish", tinyfish)
-        if kind == "ok":
-            return _result(url, tinyfish)
+        for position, stage in enumerate(stages):
+            if stage.fetch is None:
+                doc = {"error": f"{stage.name}: {stage.missing}", "code": "no_key"}
+            elif (remaining := left()) < MIN_STAGE:
+                doc = {"error": f"{stage.name}: no time left", "code": "no_time"}
+            else:
+                doc = await _call(stage.name, stage.fetch, remaining)
+                firecrawl_asked |= stage.id == "firecrawl" and doc.get("code") not in ("paused", "interrupted")
+            if doc.get("code") == "interrupted":  # S8, N5: skip the rest and do not wait for Keenable
+                steps.append(f"{stage.id}=interrupted")
+                reasons.append(doc["error"])
+                interrupted = True
+                break
+            kind = classify(doc, full_page=stage.full_page)
+            if kind == "paywall":
+                steps.append(f"{stage.id}=paywall")
+                return _result(url, doc, *_source(stage.id, stage.name, reasons), NOTE_PAYWALL)
+            if kind in ("error", "empty", "challenge", "wall"):
+                steps.append(f"{stage.id}={doc.get('code') or kind}")
+                reasons.append(_reason(stage.name, doc, kind))
+                if kind == "wall" and wall is None:
+                    wall = doc
+                if kind == "challenge" and check is None:
+                    check = doc
+                if doc.get("target_status") in GONE_STATUS:
+                    gone.append(doc["target_status"])
+                if len(gone) >= GONE_MIN and not firecrawl_asked:  # N6: the page is gone; no further live request
+                    copy = await keenable_doc(left())
+                    copy_kind = classify(copy) if copy is not None else ""
+                    if copy_kind in ("ok", "thin", "paywall"):  # a consent page or bot check is no copy (N17a)
+                        steps.append("keenable=gone_copy")
+                        notes = [NOTE_GONE.format(status=gone[-1])] + ([NOTE_PAYWALL] if copy_kind == "paywall" else [])
+                        return _result(url, copy, *notes)
+                    if copy is not None:
+                        steps.append(f"keenable={copy.get('code') or classify(copy)}")
+                        reasons.append(_reason("Keenable", copy, classify(copy)))
+                    elif reference is not None:  # Keenable did not answer within the time left
+                        steps.append("keenable=no_time")
+                        reasons.append("Keenable: no time left")
+                    return failure(url, "; ".join(reasons))
+                continue
+            if not waited:  # N9: the reference is needed now; later stages do not wait again
+                waited = True
+                ref = await keenable_doc(left())
+                # only a real copy is a reference; a consent page or bot check of Keenable is none (second opinion)
+                usable = ref is not None and classify(ref) in ("ok", "thin")
+                reference_len = len(_visible(ref)) if usable else None
+            rule = suspect(doc, reference_len)
+            if rule is None:
+                steps.append(f"{stage.id}={kind}")
+                return _result(url, doc, *_source(stage.id, stage.name, reasons))
+            steps.append(f"{stage.id}=suspect_{rule}")
+            kept.append((rule != "check", len(_visible(doc)), -position, stage.id, stage.name, doc))
+            reasons.append(_reason(stage.name, doc, rule))
+
+        # N5: Keenable is the last stage; its request has been running since the start.
+        if interrupted:  # the provider cancels the Keenable request
+            doc = {"error": "Keenable: interrupted", "code": "interrupted"}
+        elif reference is None:
+            doc = {"error": "Keenable: no API key", "code": "no_key"}
+        else:
+            doc = await keenable_doc(left())
+            if doc is None:
+                doc = {"error": "Keenable: no time left", "code": "no_time"}
+        kind = classify(doc)
         if kind == "paywall":
-            return _result(url, tinyfish, NOTE_PAYWALL)
-        if kind == "error" and tinyfish.get("code") in FINAL_TINYFISH_CODES:
-            return failure(url, tinyfish["error"])
+            steps.append("keenable=paywall")
+            return _result(url, doc, *_source("keenable", "Keenable", reasons), NOTE_PAYWALL)
+        if kind in ("ok", "thin"):
+            rule = suspect(doc, None)
+            if rule is None:
+                steps.append(f"keenable={kind}")
+                return _result(url, doc, *_source("keenable", "Keenable", reasons))
+            steps.append(f"keenable=suspect_{rule}")
+            kept.append((rule != "check", len(_visible(doc)), -len(stages), "keenable", "Keenable", doc))
+            reasons.append(_reason("Keenable", doc, rule))
+        else:  # a Keenable wall or bot-check page is never kept, as before (K4)
+            steps.append(f"keenable={doc.get('code') or kind}")
+            reasons.append(_reason("Keenable", doc, kind))
 
-        reasons = [_reason("TinyFish", tinyfish, kind)]
-        wall_page = tinyfish if kind == "wall" else None
-        short = tinyfish if kind == "thin" else None  # E8/K2: the short page so far
-        check = (tinyfish, []) if kind == "challenge" else None  # E7/V11: the bot-check page so far, with its notes
-        if wall_page is None:
-            page = await _call("Firecrawl", firecrawl)
-            kind = step("firecrawl", page)
-            if kind in ("ok", "paywall"):
-                notes = [NOTE_FIRECRAWL.format(reason=reasons[0])]
-                return _result(url, page, *notes, *([NOTE_PAYWALL] if kind == "paywall" else []))
-            reasons.append(_reason("Firecrawl", page, kind))
-            if kind == "thin":  # K3: two short live pages end the chain; Keenable is not asked (D23)
-                source = NOTE_FIRECRAWL.format(reason=reasons[0])
-                if short is None:
-                    return _result(url, page, source, NOTE_THIN.format(n=len(_visible(page))))
-                if len(_visible(page)) > len(_visible(short)):
-                    return _result(url, page, source, NOTE_THIN_BOTH.format(n=len(_visible(page))))
-                return _result(url, short, NOTE_THIN_BOTH.format(n=len(_visible(short))))
-            if short is not None:  # K3: Firecrawl gave no page; a short live page is never dropped (D23)
-                return _result(url, short, NOTE_THIN_ALONE.format(n=len(_visible(short)), reason=reasons[1]))
-            if kind == "wall":
-                wall_page = page
-            if kind == "challenge" and check is None:
-                check = (page, [NOTE_FIRECRAWL.format(reason=reasons[0])])
-
-        page = await _call("Keenable", keenable)
-        kind = step("keenable", page)
-        if kind in ("ok", "paywall", "thin"):  # K4: a short index copy is still the best there is
-            notes = [NOTE_KEENABLE.format(reasons="; ".join(reasons))]
-            return _result(url, page, *notes, *([NOTE_PAYWALL] if kind == "paywall" else []))
-        reasons.append(_reason("Keenable", page, kind))
-        if wall_page is not None:
-            return _result(url, wall_page, NOTE_WALL.format(reasons="; ".join(reasons)))
-        if check is not None:  # V11: no stage had better; a real short page can match a marker
-            return _result(url, check[0], *check[1], NOTE_CHECK.format(reasons="; ".join(reasons)))
+        # N8: no stage passed the checks
+        plain = [k for k in kept if k[0]]
+        if plain:
+            _, n, _, _, name, doc = max(plain, key=lambda k: (k[1], k[2]))
+            return _result(url, doc, NOTE_LONGEST.format(provider=name, n=n, reasons="; ".join(reasons)))
+        if kept:  # only results with a bot-check or JavaScript hint
+            doc = max(kept, key=lambda k: (k[1], k[2]))[5]
+            return _result(url, doc, NOTE_CHECK.format(reasons="; ".join(reasons)))
+        if wall is not None:
+            return _result(url, wall, NOTE_WALL.format(reasons="; ".join(reasons)))
+        if check is not None:
+            return _result(url, check, NOTE_CHECK.format(reasons="; ".join(reasons)))
         return failure(url, "; ".join(reasons))
     except Exception as exc:  # S6: an unexpected failure only fails this URL, not the whole call
         log.warning("extract-chain %s: chain failed: %s", _host(url), type(exc).__name__)
         return failure(url, f"extract-chain: {type(exc).__name__}")
     finally:
+        try:  # S6: the log line must never fail the URL or the call
+            if not any(s.startswith("keenable=") for s in steps):  # N20: Keenable is always listed
+                if reference is None:
+                    steps.append("keenable=no_key")
+                elif reference.done() and not reference.cancelled() and reference.exception() is None:
+                    ref = reference.result()
+                    steps.append(f"keenable=ref_{ref.get('code') or classify(ref)}")
+                else:
+                    steps.append("keenable=pending")
+        except Exception:
+            steps.append("keenable=exception")
         log.info("extract-chain %s: %s", _host(url), " ".join(steps))

@@ -1,3 +1,5 @@
+"""Classification (E1-E8), checks (N7) and the chain of one URL (N5-N9, N17-N20, V3-V11, L1)."""
+
 import asyncio
 import logging
 import re
@@ -5,53 +7,70 @@ import time
 
 import pytest
 
+from extract_chain import chain
 from extract_chain.chain import (
     NOTE_CHECK,
-    NOTE_FIRECRAWL,
-    NOTE_KEENABLE,
+    NOTE_COPY,
+    NOTE_GONE,
+    NOTE_LIVE,
+    NOTE_LONGEST,
     NOTE_PAYWALL,
     NOTE_PDF,
     NOTE_REDIRECT,
-    NOTE_THIN,
-    NOTE_THIN_ALONE,
-    NOTE_THIN_BOTH,
     NOTE_WALL,
     PAYWALL,
     PAYWALL_DEFINITE,
+    SUSPECT_CHECK,
+    SUSPECT_JS,
+    SUSPECT_PRINT,
     WALL,
+    Stage,
     classify,
     run_chain,
+    suspect,
 )
 
 ARTICLE = "Ein ganz normaler Artikeltext mit mehreren Sätzen. " * 20
+LONG = ARTICLE * 3  # a reference copy at least 1.5 times as long as ARTICLE
 WALL_TEXT = "Cookies zustimmen oder PUR-Abo abschließen. Einwilligung erteilen."
 PAYWALL_TEXT = ARTICLE + "Das war die Leseprobe."
+BOT = "Please verify you are human."
 URL = "https://news.example/artikel"
+OTHER = "https://other.example/x"
+NAMES = {"brightdata": "Bright Data", "jina": "Jina", "firecrawl": "Firecrawl", "tavily": "Tavily"}
 
 
-def doc(content="", error=None, code=None, title="T"):
-    d = {"title": title, "content": content, "error": error}
+def doc(content="", error=None, code=None, title="T", **extra):
+    d = {"title": title, "content": content, "error": error, **extra}
     if code:
         d["code"] = code
     return d
 
 
-def tf_error(code):
-    return doc(error=f"TinyFish: {code}", code=code)
+def err(provider, detail, code="error", **extra):
+    return doc(error=f"{provider}: {detail}", code=code, **extra)
 
 
-# --- E1-E5, E7, E8 -----------------------------------------------------------------------------------
+def gone(provider, status):
+    return err(provider, f"target HTTP {status}", f"target_{status}", target_status=status)
+
+
+def n(text):
+    return len(text.strip())
+
+
+# --- E1-E8 classify ----------------------------------------------------------------------------------
 
 
 def test_error_wins_over_content():  # E1
-    assert classify(doc("anything", "TinyFish: bot_blocked")) == "error"
+    assert classify(doc("anything", "Jina: target HTTP 403")) == "error"
 
 
 @pytest.mark.parametrize(
     ("content", "expected"),
     [
         ("x" * 19, "empty"),  # E2 boundary
-        ("x" * 20, "thin"),  # E8: 20 characters is no longer ok
+        ("x" * 20, "thin"),  # E8
         ("<!DOCTYPE html><html><head></head><body></body></html>", "empty"),  # E2 strips tags
         (WALL_TEXT, "wall"),  # E3 two markers
         ("Cookies zustimmen. " + ARTICLE, "ok"),  # E3 one marker only
@@ -59,7 +78,7 @@ def test_error_wins_over_content():  # E1
         (ARTICLE + "SPIEGEL+", "ok"),  # E4 one general marker
         (ARTICLE + "SPIEGEL+ Jetzt weiterlesen", "paywall"),  # E4 two general markers
         (WALL_TEXT + " Das war die Leseprobe. " + ARTICLE, "wall"),  # wall before paywall
-        ("I'm not a robot. Please click to confirm.", "challenge"),  # E7 observed: TinyFish, 41 characters
+        ("I'm not a robot. Please click to confirm.", "challenge"),  # E7
         ("Checking the site connection security. Please wait a moment while we verify.", "challenge"),
         ("Verify you are human by completing the action below.", "challenge"),
         ("Please verify that you are human.", "challenge"),
@@ -68,14 +87,14 @@ def test_error_wins_over_content():  # E1
         ("A required part of this site couldn’t load. Try again.", "challenge"),  # typographic apostrophe
         ("Access Denied. You do not have permission.", "challenge"),
         ("<div><b>Just a moment... checking</b></div>", "challenge"),  # case-insensitive, tags removed first
-        ("A footer with imprint and links only. " * 3, "thin"),  # E8 observed: footer text
+        ("A footer with imprint and links only. " * 3, "thin"),  # E8
         ("a" * 499, "thin"),
         ("a" * 500, "ok"),
         ("<p>" + "a" * 499 + "</p>" * 20, "thin"),  # tags do not count
         ("<p>" + "a" * 500 + "</p>", "ok"),
         ("captcha " + "a" * 1491, "challenge"),  # 1,499 visible characters
         ("captcha " + "a" * 1492, "ok"),  # 1,500: the cap
-        (ARTICLE * 3 + " The captcha on this site is explained here.", "ok"),  # long article that mentions a marker
+        (ARTICLE * 3 + " The captcha on this site is explained here.", "ok"),
         ("Das war die Leseprobe.", "paywall"),  # paywall keeps its place before thin
     ],
 )
@@ -83,20 +102,20 @@ def test_classify(content, expected):
     assert classify(doc(content)) == expected
 
 
-def test_less_than_sign_is_no_tag():  # E2: only HTML tags are removed, not text between "<" and a later ">" (N01)
+def test_less_than_sign_is_no_tag():  # E2
     assert classify(doc("Wenn x < 10 ist, " + ARTICLE + " gilt x -> y.")) == "ok"
     code = "Der Ausdruck `a < b` ist wahr, wenn a kleiner ist.\n\n" + ARTICLE + "\n\n```\n>>> 1 < 2\nTrue\n```\n"
     assert classify(doc(code)) == "ok"
     assert classify(doc("<p>" + ARTICLE + "</p><br/><!-- c --><div class='a'></div>")) == "ok"
-    assert classify(doc("<p class='x'> " + "y" * 10 + " </p>")) == "empty"  # tags with attributes still count as tags
+    assert classify(doc("<p class='x'> " + "y" * 10 + " </p>")) == "empty"
     assert classify(doc("<p\nclass='x'>" + "y" * 10 + "</p><!DOCTYPE html>")) == "empty"
-    assert classify(doc("for (i = 0; i<n; i++) " + ARTICLE + " p->next")) == "ok"  # "<n;" opens no tag
+    assert classify(doc("for (i = 0; i<n; i++) " + ARTICLE + " p->next")) == "ok"
     assert classify(doc("List<String> " + ARTICLE)) == "ok"
 
 
-def test_many_less_than_signs_classify_in_linear_time():  # N01: the tag pattern backtracked quadratically
+def test_many_less_than_signs_classify_in_linear_time():  # E2
     start = time.perf_counter()
-    assert classify(doc("a<b " * 80_000), full_page=True) == "ok"  # took about 13 s before
+    assert classify(doc("a<b " * 80_000), full_page=True) == "ok"
     assert time.perf_counter() - start < 2
 
 
@@ -111,341 +130,656 @@ def test_each_marker_is_in_one_list_only():  # E6
 
 @pytest.mark.parametrize("markers", [WALL, PAYWALL])
 def test_no_marker_lies_inside_another_marker_of_its_list(markers):  # E6
-    plain = [m for m in markers if not set(m) & set("\\[](|?+")]  # markers that are their own example text
+    plain = [m for m in markers if not set(m) & set("\\[](|?+")]
     assert [(m, text) for text in plain for m in markers if m != text and re.search(m, text, re.IGNORECASE)] == []
 
 
-def test_cookie_zustimmung_counts_once():
+def test_cookie_zustimmung_counts_once():  # E3
     assert classify(doc("Cookie-Zustimmung. " + ARTICLE)) == "ok"
     assert classify(doc("Cookie-Zustimmung. Ihre Zustimmung fehlt. " + ARTICLE)) == "wall"
 
 
 def test_wall_window():  # E3: the whole text below 4,000 characters, otherwise the first 2,000
-    short = "a" * (3999 - len(WALL_TEXT)) + WALL_TEXT
-    assert len(short) == 3999
-    assert classify(doc(short)) == "wall"
-    long = "a" * (4000 - len(WALL_TEXT)) + WALL_TEXT
-    assert len(long) == 4000
-    assert classify(doc(long)) == "ok"
-    assert classify(doc("a" * 1990 + WALL_TEXT + "a" * 3000)) == "ok"  # second marker beyond 2000
+    assert classify(doc("a" * (3999 - len(WALL_TEXT)) + WALL_TEXT)) == "wall"
+    assert classify(doc("a" * (4000 - len(WALL_TEXT)) + WALL_TEXT)) == "ok"
+    assert classify(doc("a" * 1990 + WALL_TEXT + "a" * 3000)) == "ok"
     assert classify(doc(WALL_TEXT + "a" * 5000)) == "wall"
 
 
-def test_paywall_area_full_page_ignores_last_quarter():
+def test_paywall_area_full_page_ignores_last_quarter():  # E4
     footer = " SPIEGEL+ Jetzt weiterlesen"
-    page = "a" * (8000 - len(footer)) + footer  # markers in the last 25 %: footer of a whole page
+    page = "a" * (8000 - len(footer)) + footer
     assert classify(doc(page), full_page=True) == "ok"
-    assert classify(doc(page)) == "paywall"  # main-content providers: whole text counts
-    early = "a" * 5000 + footer + "a" * 2000  # markers at about 63 %
-    assert classify(doc(early), full_page=True) == "paywall"
-    short = "a" * 3000 + footer  # below 4000 characters the whole text counts
-    assert classify(doc(short), full_page=True) == "paywall"
+    assert classify(doc(page)) == "paywall"
+    assert classify(doc("a" * 5000 + footer + "a" * 2000), full_page=True) == "paywall"
+    assert classify(doc("a" * 3000 + footer), full_page=True) == "paywall"
 
 
-# --- K2-K5, V1-V6 ------------------------------------------------------------------------------------
+# --- N7 suspect ----------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("length", "rule"), [(499, "thin"), (500, None)])
+def test_suspect_thin(length, rule):  # N7.1: 500 characters
+    assert suspect(doc("a" * length), None) == rule
+
+
+def test_suspect_thin_counts_visible_text():  # N7, E2
+    assert suspect(doc("<p>" + "a" * 499 + "</p>" * 50), None) == "thin"
+
+
+@pytest.mark.parametrize("marker", ["Dieser Ausdruck wurde am", "AUSDRUCK ERSTELLT"])
+def test_suspect_print_in_the_first_5000_characters(marker):  # N7.2, case-insensitive
+    assert suspect(doc("a" * (5000 - len(marker)) + marker + "b" * 100), None) == "print"
+    assert suspect(doc("a" * (5001 - len(marker)) + marker + "b" * 100), None) is None
+
+
+@pytest.mark.parametrize(
+    "hint",
+    [
+        "Turn on JavaScript",
+        "enable javascript",
+        "JavaScript is disabled",
+        "javascript required",
+        "Aktivieren Sie JavaScript",
+        "Just a moment",
+        "Nur einen Moment",
+        "verify you are human",
+        "CAPTCHA",
+        "Access denied",
+        "Pardon our interruption",
+        "Zugriff verweigert",
+        "Sicherheitsüberprüfung",
+        "Security check",
+        "Checking your browser",
+    ],
+)
+def test_suspect_check_below_3000(hint):  # N7.3
+    assert suspect(doc(hint + " " + "a" * (2999 - len(hint) - 1)), None) == "check"
+    assert suspect(doc(hint + " " + "a" * (3000 - len(hint) - 1)), None) is None
+
+
+def test_suspect_check_lists_are_covered():  # N7.3: the hints above are the whole lists
+    assert len(SUSPECT_JS) == 4 and len(SUSPECT_CHECK) == 10 and len(SUSPECT_PRINT) == 2
+
+
+def test_suspect_consent_counts_occurrences():  # N7.4: two occurrences of one marker, below 1,500
+    text = "Cookie hier, noch ein Cookie. "
+    assert suspect(doc(text + "a" * (1499 - len(text))), None) == "consent"
+    assert suspect(doc(text + "a" * (1500 - len(text))), None) is None
+    assert suspect(doc("Zustimmung. " + "a" * 1000), None) is None  # one occurrence
+    assert suspect(doc("Consent und Einwilligung. " + "a" * 1000), None) == "consent"  # two markers count as well
+
+
+@pytest.mark.parametrize(("reference", "rule"), [(1499, None), (1500, "shorter"), (1501, "shorter"), (None, None)])
+def test_suspect_shorter_than_the_reference(reference, rule):  # N7.5: factor 1.5, none without a reference
+    assert suspect(doc("a" * 1000), reference) == rule
+
+
+@pytest.mark.parametrize(
+    ("content", "rule"),
+    [
+        ("Dieser Ausdruck wurde am 1.1. erstellt. " + "a" * 300, "thin"),  # thin before print
+        ("Ausdruck erstellt. Enable JavaScript. " + "a" * 1000, "print"),  # print before check
+        ("Enable JavaScript. Cookie, cookie. " + "a" * 1000, "check"),  # check before consent
+        ("Cookie, cookie. " + "a" * 1000, "consent"),  # consent before shorter
+        ("Ausdruck erstellt. " + "a" * 4000, "print"),  # print before shorter
+    ],
+)
+def test_suspect_rule_order(content, rule):  # N7: the first rule that applies wins
+    assert suspect(doc(content), 100_000) == rule
+
+
+# --- run_chain helpers -------------------------------------------------------------------------------
 
 
 class Fake:
-    """Async fetch stand-in that counts calls (K5)."""
+    """Fetch stand-in: counts calls (K5) and records the deadline it got (N9)."""
 
-    def __init__(self, result=None, exc=None):
-        self.result, self.exc, self.calls = result, exc, 0
+    def __init__(self, result=None, exc=None, then=None):
+        self.result, self.exc, self.then, self.deadlines = result, exc, then, []
 
-    async def __call__(self):
-        self.calls += 1
+    @property
+    def calls(self):
+        return len(self.deadlines)
+
+    async def __call__(self, deadline):
+        self.deadlines.append(deadline)
+        if self.then:
+            self.then()
         if self.exc:
             raise self.exc
         return self.result
 
 
-def run(tinyfish, firecrawl=None, keenable=None):
-    out = asyncio.run(run_chain(URL, tinyfish, firecrawl, keenable))
-    assert out["url"] == URL and out["metadata"]["sourceURL"] == URL  # S5: every entry names its input URL
-    return out
+class Clock:
+    def __init__(self, now=1000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
 
 
-def test_tinyfish_ok_no_note_no_fallback():
-    fc, ke = Fake(doc(ARTICLE)), Fake(doc(ARTICLE))
-    out = run(doc(ARTICLE), fc, ke)
+def stages(*results, order=("brightdata", "jina", "firecrawl", "tavily")):
+    """Stages with Fake fetches; a result of None means a stage without a key (N3)."""
+    fakes = [r if isinstance(r, Fake) else Fake(r) for r in results]
+    built = [
+        Stage(sid, NAMES[sid], None if r is None else fake) for sid, r, fake in zip(order, results, fakes, strict=False)
+    ]
+    return built, fakes
+
+
+REFERENCE = doc(ARTICLE)  # Keenable's copy as long as ARTICLE: rule N7.5 does not apply
+
+
+def run(stage_list, reference=REFERENCE, *, budget=170.0, clock=None):
+    """reference: Keenable's result (dict), None (no key), an exception, "pending", or a function(loop, future)."""
+
+    async def go():
+        loop = asyncio.get_running_loop()
+        task = None
+        if reference is not None:
+            task = loop.create_future()
+            if isinstance(reference, dict):
+                task.set_result(reference)
+            elif isinstance(reference, Exception):
+                task.set_exception(reference)
+            elif callable(reference):
+                reference(loop, task)
+        out = await run_chain(URL, stage_list, task, budget=budget, clock=clock or Clock())
+        assert out["url"] == URL and out["metadata"]["sourceURL"] == URL  # S5
+        return out
+
+    return asyncio.run(go())
+
+
+def notes(out):
+    return out["content"].split("\n\n", 1)[0].splitlines()
+
+
+def logged(caplog):
+    caplog.set_level(logging.INFO, logger="extract_chain.chain")
+    return lambda: [r.getMessage() for r in caplog.records if r.name == "extract_chain.chain"]
+
+
+# --- N6, N17: stages in order ------------------------------------------------------------------------
+
+
+def test_first_stage_ok_is_taken_without_note():  # N6, N17: no note from the first stage
+    s, fakes = stages(doc(ARTICLE), doc(ARTICLE), doc(ARTICLE), doc(ARTICLE))
+    out = run(s, doc(ARTICLE))
     assert out == {"url": URL, "title": "T", "content": ARTICLE, "error": None, "metadata": {"sourceURL": URL}}
-    assert fc.calls == ke.calls == 0
-    assert run(doc(ARTICLE, title=None))["title"] == ""  # S5: no title is an empty one
+    assert [f.calls for f in fakes] == [1, 0, 0, 0]
 
 
-def test_tinyfish_paywall_note_only():
-    fc, ke = Fake(doc(ARTICLE)), Fake(doc(ARTICLE))
-    out = run(doc(PAYWALL_TEXT), fc, ke)
-    assert out["content"] == f"{NOTE_PAYWALL}\n\n{PAYWALL_TEXT}"
-    assert fc.calls == ke.calls == 0
+def test_stage_gets_the_time_left():  # N9: each stage at most the remaining budget
+    clock = Clock()
+    s, fakes = stages(Fake(err("Bright Data", "x"), then=lambda: setattr(clock, "now", clock.now + 30)), doc(ARTICLE))
+    run(s, doc(ARTICLE), budget=170.0, clock=clock)
+    assert [f.deadlines for f in fakes] == [[170.0], [140.0]]
 
 
-@pytest.mark.parametrize(
-    "code", ["page_not_found", "login_required", "invalid_url", "invalid_redirect_url", "content_too_large"]
-)
-def test_tinyfish_final_codes_pass_through(code):
-    fc, ke = Fake(doc(ARTICLE)), Fake(doc(ARTICLE))
-    out = run(tf_error(code), fc, ke)
-    assert out["error"] == f"TinyFish: {code}" and out["content"] == ""
-    assert fc.calls == ke.calls == 0
-
-
-def test_firecrawl_after_tinyfish_error():
-    fc, ke = Fake(doc(ARTICLE, title="FC")), Fake(doc(ARTICLE))
-    out = run(tf_error("bot_blocked"), fc, ke)
-    assert out["content"] == NOTE_FIRECRAWL.format(reason="TinyFish: bot_blocked") + "\n\n" + ARTICLE
-    assert out["title"] == "FC" and out["error"] is None
-    assert (fc.calls, ke.calls) == (1, 0)
-
-
-def test_firecrawl_after_tinyfish_empty():
-    out = run(doc(""), Fake(doc(ARTICLE)), Fake())
-    assert out["content"].startswith(NOTE_FIRECRAWL.format(reason="TinyFish: empty page"))
-
-
-def test_firecrawl_footer_markers_no_paywall_note():
-    page = ARTICLE * 10 + " SPIEGEL+ Jetzt weiterlesen Mehrfachnutzung erkannt"
-    out = run(tf_error("bot_blocked"), Fake(doc(page)), Fake())
-    assert out["content"] == NOTE_FIRECRAWL.format(reason="TinyFish: bot_blocked") + "\n\n" + page
-
-
-def test_firecrawl_paywall_two_notes():
-    out = run(tf_error("timeout"), Fake(doc(PAYWALL_TEXT)), Fake(doc(ARTICLE)))
-    note = NOTE_FIRECRAWL.format(reason="TinyFish: timeout")
-    assert out["content"] == f"{note}\n{NOTE_PAYWALL}\n\n{PAYWALL_TEXT}"
-
-
-def test_tinyfish_wall_skips_firecrawl():
-    fc, ke = Fake(doc(ARTICLE)), Fake(doc(ARTICLE, title="KE"))
-    out = run(doc(WALL_TEXT), fc, ke)
-    assert out["content"] == NOTE_KEENABLE.format(reasons="TinyFish: consent wall") + "\n\n" + ARTICLE
-    assert out["title"] == "KE"
-    assert (fc.calls, ke.calls) == (0, 1)
-
-
-def test_keenable_after_firecrawl_wall():
-    out = run(tf_error("bot_blocked"), Fake(doc(WALL_TEXT)), Fake(doc(ARTICLE)))
-    reasons = "TinyFish: bot_blocked; Firecrawl: consent wall"
-    assert out["content"].startswith(NOTE_KEENABLE.format(reasons=reasons) + "\n\n")
-
-
-def test_keenable_paywall_two_notes():
-    out = run(doc(WALL_TEXT), Fake(), Fake(doc(PAYWALL_TEXT)))
-    note = NOTE_KEENABLE.format(reasons="TinyFish: consent wall")
-    assert out["content"] == f"{note}\n{NOTE_PAYWALL}\n\n{PAYWALL_TEXT}"
-
-
-def test_all_fail_joined_error():
-    out = run(
-        tf_error("bot_blocked"),
-        Fake(doc(error="Firecrawl: target HTTP 403")),
-        Fake(doc(error="Keenable: Gateway timeout")),
-    )
-    error = "TinyFish: bot_blocked; Firecrawl: target HTTP 403; Keenable: Gateway timeout"
-    assert out == {"url": URL, "title": "", "content": "", "error": error, "metadata": {"sourceURL": URL}}  # S5
-
-
-def test_wall_without_alternative_returns_wall_page():
-    out = run(doc(WALL_TEXT), Fake(), Fake(doc(error="Keenable: The page is behind a login or paywall")))
-    reasons = "TinyFish: consent wall; Keenable: The page is behind a login or paywall"
-    assert out["content"] == NOTE_WALL.format(reasons=reasons) + "\n\n" + WALL_TEXT
-    assert out["error"] is None
-
-
-def test_firecrawl_wall_page_kept_when_keenable_fails():
-    fc_wall = WALL_TEXT + " (Firecrawl)"
-    out = run(tf_error("bot_blocked"), Fake(doc(fc_wall)), Fake(doc("")))
-    assert out["content"].endswith(fc_wall)
-    assert "Keenable: empty page" in out["content"].splitlines()[0]
-
-
-def test_missing_keys_skip_stages(caplog):
-    caplog.set_level(logging.INFO, logger="extract_chain.chain")
-    out = run(tf_error("bot_blocked"), None, None)
-    assert out["error"] == "TinyFish: bot_blocked; Firecrawl: no API key; Keenable: no API key"
-    assert caplog.messages == ["extract-chain news.example: tinyfish=bot_blocked firecrawl=no_key keenable=no_key"]
-
-
-def test_exception_in_stage_becomes_error(caplog):
-    caplog.set_level(logging.INFO, logger="extract_chain.chain")
-    ke = Fake(doc(ARTICLE))
-    out = run(tf_error("bot_blocked"), Fake(exc=RuntimeError("boom")), ke)
-    assert "Firecrawl: RuntimeError" in out["content"].splitlines()[0]
-    assert ke.calls == 1
-    assert caplog.messages == ["extract-chain news.example: tinyfish=bot_blocked firecrawl=exception keenable=ok"]  # L1
-
-
-def test_log_line(caplog):
-    caplog.set_level(logging.INFO, logger="extract_chain.chain")
-    run(tf_error("bot_blocked"), Fake(doc(error="Firecrawl: API 429: busy")), Fake(doc(ARTICLE)))
-    run(doc(ARTICLE))
-    lines = [r.getMessage() for r in caplog.records]
-    assert lines == [
-        "extract-chain news.example: tinyfish=bot_blocked firecrawl=error keenable=ok",
-        "extract-chain news.example: tinyfish=ok",
-    ]
-
-
-def test_log_line_never_raises_or_shows_full_url(caplog):
-    caplog.set_level(logging.INFO, logger="extract_chain.chain")
-    out = asyncio.run(run_chain("http://[::1", doc(ARTICLE), None, None))  # urlsplit raises ValueError here
-    asyncio.run(run_chain("file:///tmp/x?token=abc", doc(ARTICLE), None, None))
-    asyncio.run(run_chain(123, doc(ARTICLE), None, None))  # urlsplit raises another class for a non-string
-    assert out["error"] is None
-    assert [r.getMessage() for r in caplog.records] == [
-        "extract-chain <invalid url>: tinyfish=ok",
-        "extract-chain <no host>: tinyfish=ok",
-        "extract-chain <invalid url>: tinyfish=ok",
-    ]
-
-
-def test_pdf_cap_note_and_final_url():
-    page = doc(ARTICLE)
-    page.update(pdf_pages=(30, 120), final_url="https://news.example/final")
-    out = run(tf_error("timeout"), Fake(page), Fake())
-    lines = out["content"].splitlines()
-    assert lines[1] == NOTE_PDF.format(shown=30, total=120)
-    assert out["metadata"] == {"sourceURL": URL, "finalURL": "https://news.example/final"}
-
-
-# --- E7, E8 in the chain (K2, K3, K4), V8-V9 ------------------------------------------------------------
-
-SHORT = ("Eine kurze Seite mit etwas Inhalt, aber unter fünfhundert Zeichen. " * 3).strip()
-SHORTER = "Noch kürzer, aber echt, und auch noch lesbar."
-BOT = "Please verify you are human."
-THIN_REASON = f"TinyFish: very short page ({len(SHORT)} characters)"
-OTHER = "https://other.example/x"
-
-
-def test_tinyfish_thin_firecrawl_ok():
-    fc, ke = Fake(doc(ARTICLE, title="FC")), Fake(doc(ARTICLE))
-    out = run(doc(SHORT), fc, ke)
-    assert out["content"] == NOTE_FIRECRAWL.format(reason=THIN_REASON) + "\n\n" + ARTICLE
-    assert (fc.calls, ke.calls) == (1, 0)
-
-
-def test_tinyfish_thin_firecrawl_paywall():
-    out = run(doc(SHORT), Fake(doc(PAYWALL_TEXT)), Fake())
-    assert out["content"] == f"{NOTE_FIRECRAWL.format(reason=THIN_REASON)}\n{NOTE_PAYWALL}\n\n{PAYWALL_TEXT}"
-
-
-def test_both_thin_longer_page_wins_with_source_note():  # V8, V2
-    longer = SHORT + " Und noch ein Satz."
-    ke = Fake(doc(ARTICLE))
-    out = run(doc(SHORT), Fake(doc(longer, title="FC")), ke)
-    note = NOTE_THIN_BOTH.format(n=len(longer))
-    assert out["content"] == f"{NOTE_FIRECRAWL.format(reason=THIN_REASON)}\n{note}\n\n{longer}"
-    assert out["title"] == "FC" and ke.calls == 0
-
-
-@pytest.mark.parametrize("firecrawl_text", [SHORT, SHORTER])
-def test_both_thin_tinyfish_page_when_shorter_or_equal(firecrawl_text):  # V8, a tie goes to TinyFish
-    ke = Fake(doc(ARTICLE))
-    out = run(doc(SHORT, title="TF"), Fake(doc(firecrawl_text, title="FC")), ke)
-    assert out["content"] == NOTE_THIN_BOTH.format(n=len(SHORT)) + "\n\n" + SHORT
-    assert out["title"] == "TF" and ke.calls == 0
-
-
-@pytest.mark.parametrize(
-    ("firecrawl_doc", "reason"),
-    [
-        (doc(error="Firecrawl: target HTTP 403"), "Firecrawl: target HTTP 403"),
-        (None, "Firecrawl: no API key"),
-        (doc(""), "Firecrawl: empty page"),
-        (doc(BOT), "Firecrawl: bot check page"),
-        (
-            doc(error="Firecrawl: API 402: no credits (paused for another 3 h)", code="paused"),
-            "Firecrawl: API 402: no credits (paused for another 3 h)",
-        ),
-    ],
-)
-def test_thin_without_second_opinion_returns_tinyfish_page(firecrawl_doc, reason):  # V9, D23
-    ke = Fake(doc(ARTICLE))
-    out = run(doc(SHORT), None if firecrawl_doc is None else Fake(firecrawl_doc), ke)
-    assert out["content"] == NOTE_THIN_ALONE.format(n=len(SHORT), reason=reason) + "\n\n" + SHORT
-    assert out["error"] is None and ke.calls == 0
-
-
-def test_thin_then_firecrawl_wall_returns_tinyfish_page():  # K3, D23: a short page is never dropped for a wall
-    ke = Fake(doc(ARTICLE))
-    out = run(doc(SHORT), Fake(doc(WALL_TEXT)), ke)
-    assert out["content"] == NOTE_THIN_ALONE.format(n=len(SHORT), reason="Firecrawl: consent wall") + "\n\n" + SHORT
-    assert out["error"] is None and ke.calls == 0
-
-
-def test_challenge_then_firecrawl_ok():
-    out = run(doc(BOT), Fake(doc(ARTICLE)), Fake())
-    assert out["content"] == NOTE_FIRECRAWL.format(reason="TinyFish: bot check page") + "\n\n" + ARTICLE
+def test_no_title_is_an_empty_one():  # S5
+    s, _ = stages(doc(ARTICLE, title=None))
+    assert run(s, doc(ARTICLE))["title"] == ""
 
 
 @pytest.mark.parametrize(
     ("first", "reason"),
-    [(tf_error("bot_blocked"), "TinyFish: bot_blocked"), (doc(BOT), "TinyFish: bot check page")],
+    [
+        (err("Bright Data", "target HTTP 403", "target_403"), "Bright Data: target HTTP 403"),
+        (doc(""), "Bright Data: empty page"),
+        (doc(WALL_TEXT), "Bright Data: consent wall"),
+        (doc(BOT), "Bright Data: bot check page"),
+        (doc("a" * 312), "Bright Data: very short page (312 characters)"),
+        (doc("Dieser Ausdruck wurde am 1.1. erstellt. " + ARTICLE), "Bright Data: print view"),
+        (doc("Please enable JavaScript. " + ARTICLE), "Bright Data: JavaScript or bot-check hint"),
+        (doc("Cookie und Cookie. " + ARTICLE), "Bright Data: consent text"),
+        (doc(ARTICLE[:600]), "Bright Data: shorter than the reference copy"),
+    ],
 )
-def test_error_then_firecrawl_thin_returns_firecrawl_page(first, reason):  # V2, V8a
-    ke = Fake(doc(ARTICLE))
-    out = run(first, Fake(doc(SHORT)), ke)
-    expected = NOTE_FIRECRAWL.format(reason=reason) + "\n" + NOTE_THIN.format(n=len(SHORT)) + "\n\n" + SHORT
-    assert out["content"] == expected
-    assert ke.calls == 0
+def test_passed_over_stage_gives_live_note_with_reason(first, reason):  # N6, N7, N17
+    s, fakes = stages(first, doc(ARTICLE, title="J"))
+    out = run(s, doc(ARTICLE))
+    assert out["content"] == NOTE_LIVE.format(provider="Jina", reasons=reason) + "\n\n" + ARTICLE
+    assert out["title"] == "J" and [f.calls for f in fakes] == [1, 1]
 
 
-def test_challenge_without_alternative_is_returned_with_note():  # V11
-    reasons = "TinyFish: bot check page; Firecrawl: no API key; Keenable: no API key"
-    out = run(doc(BOT), None, None)
-    assert out["content"] == NOTE_CHECK.format(reasons=reasons) + "\n\n" + BOT and out["error"] is None
-    reasons = "TinyFish: bot check page; Firecrawl: bot check page; Keenable: Gateway timeout"
-    out = run(doc(BOT, title="TF"), Fake(doc(BOT + " (FC)", title="FC")), Fake(doc(error="Keenable: Gateway timeout")))
-    assert out["content"] == NOTE_CHECK.format(reasons=reasons) + "\n\n" + BOT and out["title"] == "TF"
+def test_reasons_of_all_passed_over_stages():  # N17: joined with "; "
+    s, _ = stages(err("Bright Data", "API 401: bad"), doc("a" * 300), doc(WALL_TEXT), doc(ARTICLE))
+    out = run(s, doc(ARTICLE))
+    reasons = "Bright Data: API 401: bad; Jina: very short page (300 characters); Firecrawl: consent wall"
+    assert notes(out) == [NOTE_COPY.format(provider="Tavily", reasons=reasons)]  # Tavily is a copy (N17)
 
 
-def test_firecrawl_challenge_page_kept_with_source_note():  # V2, V11
-    fc = BOT + " (FC)"
-    out = run(tf_error("bot_blocked"), Fake(doc(fc)), Fake(doc(error="Keenable: Gateway timeout")))
-    reasons = "TinyFish: bot_blocked; Firecrawl: bot check page; Keenable: Gateway timeout"
-    note = NOTE_FIRECRAWL.format(reason="TinyFish: bot_blocked")
-    assert out["content"] == f"{note}\n{NOTE_CHECK.format(reasons=reasons)}\n\n{fc}"
+def test_keenable_as_last_stage_gives_copy_note():  # N5, N17
+    s, _ = stages(*(err(name, "API 500") for name in NAMES.values()))
+    out = run(s, doc(ARTICLE, title="KE"))
+    reasons = "Bright Data: API 500; Jina: API 500; Firecrawl: API 500; Tavily: API 500"
+    assert out["content"] == NOTE_COPY.format(provider="Keenable", reasons=reasons) + "\n\n" + ARTICLE
+    assert out["title"] == "KE"
 
 
-def test_challenge_all_stages_without_a_page_is_still_an_error():
-    out = run(
-        tf_error("bot_blocked"), Fake(doc(error="Firecrawl: API 500")), Fake(doc(error="Keenable: Gateway timeout"))
+def test_keenable_suspect_is_checked_without_reference():  # N7: thin, print, check, consent apply to Keenable too
+    s, _ = stages(*(err(name, "API 500") for name in NAMES.values()))
+    out = run(s, doc("k" * 300))
+    reasons = "Bright Data: API 500; Jina: API 500; Firecrawl: API 500; Tavily: API 500"
+    reasons += "; Keenable: very short page (300 characters)"
+    assert notes(out) == [NOTE_LONGEST.format(provider="Keenable", n=300, reasons=reasons)]
+
+
+def test_keenable_paywall_ends_with_copy_note_and_v3():  # N6, V3
+    s, _ = stages(doc(WALL_TEXT), None, None, None)
+    out = run(s, doc(PAYWALL_TEXT))
+    reasons = "Bright Data: consent wall; Jina: no API key; Firecrawl: no API key; Tavily: no API key"
+    assert notes(out) == [NOTE_COPY.format(provider="Keenable", reasons=reasons), NOTE_PAYWALL]
+
+
+def test_keenable_is_never_used_for_the_shorter_rule_against_itself():  # N7.5
+    s, _ = stages(*(err(name, "API 500") for name in NAMES.values()))
+    assert run(s, doc(ARTICLE))["content"].endswith("\n\n" + ARTICLE)  # Keenable taken, not kept as suspect
+
+
+# --- V3 paywall, V5 wall, V11 bot check ----------------------------------------------------------------
+
+
+def test_first_stage_paywall_ends_with_v3_only():  # N6, V3, D4
+    s, fakes = stages(doc(PAYWALL_TEXT), doc(ARTICLE))
+    out = run(s, "pending")  # no wait for the reference either
+    assert out["content"] == f"{NOTE_PAYWALL}\n\n{PAYWALL_TEXT}"
+    assert fakes[1].calls == 0
+
+
+def test_later_paywall_ends_with_source_note_and_v3():  # N6, N18 order
+    s, fakes = stages(doc("a" * 300), doc(PAYWALL_TEXT), doc(ARTICLE))
+    out = run(s, doc(ARTICLE))
+    assert notes(out) == [
+        NOTE_LIVE.format(provider="Jina", reasons="Bright Data: very short page (300 characters)"),
+        NOTE_PAYWALL,
+    ]
+    assert fakes[2].calls == 0
+
+
+def test_whole_page_footer_is_no_paywall_for_live_stages():  # N6: full_page for the four stages, E4
+    footer = " SPIEGEL+ Jetzt weiterlesen"
+    page = "Ein Satz. " * 800 + footer
+    s, _ = stages(doc(page))
+    assert run(s, doc(page))["content"] == page
+    s, _ = stages(*(err(name, "API 500") for name in NAMES.values()))
+    assert notes(run(s, doc(page)))[-1] == NOTE_PAYWALL  # Keenable: no whole page
+
+
+def test_wall_without_alternative_returns_first_wall_page():  # N6, N8 (c), V5
+    s, _ = stages(doc(WALL_TEXT + " (BD)"), doc(WALL_TEXT + " (J)"), None, None)
+    out = run(s, err("Keenable", "Gateway timeout", "http_504"))
+    reasons = "Bright Data: consent wall; Jina: consent wall; Firecrawl: no API key; Tavily: no API key"
+    reasons += "; Keenable: Gateway timeout"
+    assert out["content"] == NOTE_WALL.format(reasons=reasons) + "\n\n" + WALL_TEXT + " (BD)"
+    assert out["error"] is None
+
+
+def test_wall_before_bot_check_page():  # N8 (c) before (d), V5 before V11
+    s, _ = stages(doc(BOT), doc(WALL_TEXT), None, None)
+    out = run(s, err("Keenable", "HTTP 500", "http_500"))
+    assert out["content"].endswith("\n\n" + WALL_TEXT) and notes(out)[0].startswith(NOTE_WALL.split("(")[0])
+
+
+def test_bot_check_page_without_alternative():  # N8 (d), V11
+    s, _ = stages(doc(BOT, title="BD"), doc(BOT + " (J)"), None, None)
+    out = run(s, None)
+    reasons = (
+        "Bright Data: bot check page; Jina: bot check page; Firecrawl: no API key; Tavily: no API key; "
+        "Keenable: no API key"
     )
-    assert out["error"] == "TinyFish: bot_blocked; Firecrawl: API 500; Keenable: Gateway timeout"
-    out = run(tf_error("bot_blocked"), Fake(doc(error="Firecrawl: API 500")), Fake(doc(BOT)))
-    assert out["error"] == "TinyFish: bot_blocked; Firecrawl: API 500; Keenable: bot check page"  # never kept
+    assert out["content"] == NOTE_CHECK.format(reasons=reasons) + "\n\n" + BOT and out["title"] == "BD"
 
 
-def test_wall_wins_over_challenge_page():  # V5 before V11
-    out = run(doc(WALL_TEXT), Fake(), Fake(doc(BOT)))
-    reasons = "TinyFish: consent wall; Keenable: bot check page"
-    assert out["content"] == NOTE_WALL.format(reasons=reasons) + "\n\n" + WALL_TEXT
-    out = run(doc(BOT), Fake(doc(WALL_TEXT)), Fake(doc(error="Keenable: Gateway timeout")))
-    assert out["content"].startswith(
-        NOTE_WALL.format(reasons="TinyFish: bot check page; Firecrawl: consent wall; Keenable: Gateway timeout")
+def test_keenable_wall_or_bot_check_is_never_kept():  # as in v0.2.6 (K4)
+    s, _ = stages(*(err(name, "API 500") for name in NAMES.values()))
+    out = run(s, doc(BOT))
+    assert out["error"].endswith("Tavily: API 500; Keenable: bot check page") and out["content"] == ""
+
+
+def test_all_fail_joined_error():  # N8 (e), S5
+    s, _ = stages(*(err(name, "API 500") for name in NAMES.values()))
+    out = run(s, err("Keenable", "HTTP 404", "http_404"))
+    error = "Bright Data: API 500; Jina: API 500; Firecrawl: API 500; Tavily: API 500; Keenable: HTTP 404"
+    assert out == {"url": URL, "title": "", "content": "", "error": error, "metadata": {"sourceURL": URL}}
+
+
+# --- N8 fallback order ------------------------------------------------------------------------------------
+
+
+def test_longest_suspect_result_is_returned():  # N8 (a), N18
+    s, _ = stages(doc("a" * 300), doc("b" * 400, title="J"), doc("c" * 200), err("Tavily", "failed"))
+    out = run(s, err("Keenable", "HTTP 500"))
+    reasons = (
+        "Bright Data: very short page (300 characters); Jina: very short page (400 characters); "
+        "Firecrawl: very short page (200 characters); Tavily: failed; Keenable: HTTP 500"
+    )
+    assert out["content"] == NOTE_LONGEST.format(provider="Jina", n=400, reasons=reasons) + "\n\n" + "b" * 400
+    assert out["title"] == "J"
+
+
+def test_longest_tie_goes_to_the_earlier_stage():  # N8 (a): equal length, earlier position
+    s, _ = stages(doc("a" * 300, title="BD"), doc("b" * 300, title="J"), None, None)
+    out = run(s, None)
+    assert out["title"] == "BD" and notes(out)[0].startswith("[extract-chain] No source passed the checks")
+
+
+def test_longest_result_may_be_keenables():  # N8 (a): Keenable's suspect result is a candidate as well
+    s, _ = stages(doc("a" * 300), None, None, None)
+    out = run(s, doc("k" * 400, title="KE"))
+    assert out["title"] == "KE" and "(Keenable, 400 characters;" in notes(out)[0]
+
+
+def test_check_candidates_only_when_nothing_else():  # N8 (a) leaves out results with check
+    hinted = "Please enable JavaScript. " + "a" * 2000
+    s, _ = stages(doc(hinted, title="BD"), doc("b" * 300, title="J"), None, None)
+    out = run(s, None)
+    assert out["title"] == "J"  # the shorter result without the hint
+
+
+def test_longest_check_candidate_with_v11():  # N8 (b)
+    short_hint = "Please enable JavaScript. " + "a" * 1000
+    long_hint = "Please enable JavaScript. " + "a" * 2000
+    s, _ = stages(doc(short_hint, title="BD"), doc(long_hint, title="J"), doc(WALL_TEXT), None)
+    out = run(s, None)
+    reasons = (
+        "Bright Data: JavaScript or bot-check hint; Jina: JavaScript or bot-check hint; Firecrawl: consent wall; "
+        "Tavily: no API key; Keenable: no API key"
+    )
+    assert out["content"] == NOTE_CHECK.format(reasons=reasons) + "\n\n" + long_hint  # before the wall (c)
+    assert out["title"] == "J"
+
+
+# --- N9 reference and time budget -------------------------------------------------------------------------
+
+
+def test_first_ok_stage_waits_for_the_reference():  # N9: the reference arrives while the chain waits
+    s, fakes = stages(doc(ARTICLE), doc(LONG, title="J"))
+    out = run(s, lambda loop, ref: loop.call_later(0.05, ref.set_result, doc(LONG)))
+    assert notes(out) == [NOTE_LIVE.format(provider="Jina", reasons="Bright Data: shorter than the reference copy")]
+    assert fakes[1].calls == 1
+
+
+class Script:
+    """Clock with given readings, then the last one forever (for one reading inside run_chain)."""
+
+    def __init__(self, *readings):
+        self.readings = list(readings)
+
+    def __call__(self):
+        return self.readings.pop(0) if len(self.readings) > 1 else self.readings[0]
+
+
+def test_reference_is_awaited_only_once():  # N9: later stages never wait, N7.5 stays off
+    holder = {}
+    s, fakes = stages(doc("a" * 300), Fake(doc(ARTICLE, title="J"), then=lambda: holder["ref"].set_result(doc(LONG))))
+    # readings: start, left() of stage 1, left() for the wait (0.05 s left), left() of stage 2
+    clock = Script(0.0, 0.0, 169.95, 0.0)
+    out = run(s, lambda loop, ref: holder.update(ref=ref), clock=clock)
+    assert out["title"] == "J"  # stage 2 did not see the reference that arrived after the wait
+    assert notes(out) == [NOTE_LIVE.format(provider="Jina", reasons="Bright Data: very short page (300 characters)")]
+
+
+@pytest.mark.parametrize("reference", [RuntimeError("boom"), err("Keenable", "HTTP 500", "http_500"), None])
+def test_without_reference_rule_shorter_is_off(reference):  # N7.5, N9
+    s, fakes = stages(doc(ARTICLE[:600]), doc(LONG))
+    out = run(s, reference)
+    assert out["content"] == ARTICLE[:600] and fakes[1].calls == 0
+
+
+def test_keenable_exception_is_its_error():  # S6: the reference task raised
+    s, _ = stages(*(err(name, "API 500") for name in NAMES.values()))
+    assert run(s, RuntimeError("boom"))["error"].endswith("Tavily: API 500; Keenable: RuntimeError")
+
+
+@pytest.mark.parametrize(("used", "runs"), [(160.0, True), (160.01, False)])
+def test_stage_skipped_below_10_seconds(used, runs):  # N9: 10 s left still runs
+    clock = Clock()
+    first = Fake(doc("a" * 300), then=lambda: setattr(clock, "now", clock.now + used))
+    s, fakes = stages(first, doc(ARTICLE), None, None)
+    out = run(s, None, budget=170.0, clock=clock)
+    assert fakes[1].calls == int(runs)
+    if not runs:  # N8 then applies; the reason names the skipped stage
+        assert "Jina: no time left" in notes(out)[0] and out["content"].endswith("a" * 300)
+
+
+def test_keenable_without_time_left():  # N9: the last stage does not wait beyond the budget
+    clock = Clock()
+    first = Fake(err("Bright Data", "API 500"), then=lambda: setattr(clock, "now", clock.now + 200))
+    s, _ = stages(first, doc(ARTICLE), doc(ARTICLE), doc(ARTICLE))
+    out = run(s, "pending", clock=clock)
+    assert out["error"] == (
+        "Bright Data: API 500; Jina: no time left; Firecrawl: no time left; Tavily: no time left; "
+        "Keenable: no time left"
     )
 
 
-def test_keenable_thin_counts_as_ok():  # K4
-    out = run(doc(WALL_TEXT), Fake(), Fake(doc(SHORT)))
-    assert out["content"] == NOTE_KEENABLE.format(reasons="TinyFish: consent wall") + "\n\n" + SHORT
+# --- N6 404/410 -------------------------------------------------------------------------------------------
 
 
-def test_log_line_new_kinds(caplog):  # L1
-    caplog.set_level(logging.INFO, logger="extract_chain.chain")
-    run(doc(SHORT), Fake(doc(ARTICLE)))
-    run(doc(BOT), Fake(doc(BOT)), Fake(doc(error="Keenable: HTTP 404", code="http_404")))
-    assert [r.getMessage() for r in caplog.records] == [
-        "extract-chain news.example: tinyfish=thin firecrawl=ok",
-        "extract-chain news.example: tinyfish=challenge firecrawl=challenge keenable=http_404",
+def test_two_live_404_410_before_firecrawl_end_with_keenables_copy():  # N6, N17a, D-2
+    s, fakes = stages(gone("Bright Data", 404), gone("Jina", 410), doc(ARTICLE), doc(ARTICLE))
+    out = run(s, doc(LONG[:1500], title="KE"))
+    assert out["content"] == NOTE_GONE.format(status=410) + "\n\n" + LONG[:1500] and out["title"] == "KE"
+    assert [f.calls for f in fakes] == [1, 1, 0, 0]
+
+
+@pytest.mark.parametrize(
+    ("reference", "tail"),
+    [
+        (err("Keenable", "HTTP 404", "http_404"), "; Keenable: HTTP 404"),
+        (doc(""), "; Keenable: empty page"),
+        (doc(WALL_TEXT), "; Keenable: consent wall"),  # a consent page or bot check is no copy (N17a)
+        (doc(BOT), "; Keenable: bot check page"),
+        (None, ""),  # no key: Keenable was not asked
+    ],
+)
+def test_two_live_404_without_copy_is_an_error(reference, tail):  # N6
+    s, fakes = stages(gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), doc(ARTICLE))
+    out = run(s, reference)
+    assert out["error"] == "Bright Data: target HTTP 404; Jina: target HTTP 404" + tail
+    assert [f.calls for f in fakes] == [1, 1, 0, 0]
+
+
+def test_gone_copy_with_paywall_keeps_v3(caplog):  # N6, N17a, V3
+    lines = logged(caplog)
+    s, _ = stages(gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE))
+    out = run(s, doc(PAYWALL_TEXT))
+    assert notes(out) == [NOTE_GONE.format(status=404), NOTE_PAYWALL]
+    assert lines() == ["extract-chain news.example: brightdata=target_404 jina=target_404 keenable=gone_copy"]
+
+
+def test_404_need_not_come_from_neighbouring_stages():  # N6: two of the asked live stages
+    order = ("brightdata", "tavily", "jina", "firecrawl")
+    s, fakes = stages(gone("Bright Data", 404), doc("a" * 300), gone("Jina", 404), doc(ARTICLE), order=order)
+    out = run(s, doc(ARTICLE))
+    assert notes(out) == [NOTE_GONE.format(status=404)] and fakes[3].calls == 0
+
+
+def test_one_404_does_not_end_the_chain():  # N6
+    s, fakes = stages(gone("Bright Data", 404), doc(ARTICLE, title="J"))
+    assert run(s, doc(ARTICLE))["title"] == "J"
+
+
+@pytest.mark.parametrize(
+    "first",
+    [doc(error="Firecrawl: target HTTP 404", code="target_404", target_status=404), err("Firecrawl", "API 500")],
+)
+def test_no_early_end_once_firecrawl_was_asked(first):  # N6, D-2: then the chain runs to the end
+    order = ("firecrawl", "brightdata", "jina", "tavily")
+    s, fakes = stages(first, gone("Bright Data", 404), gone("Jina", 410), doc(ARTICLE, title="TV"), order=order)
+    out = run(s, doc(ARTICLE))
+    assert out["title"] == "TV" and [f.calls for f in fakes] == [1, 1, 1, 1]
+
+
+def test_firecrawl_without_key_was_not_asked():  # N6: a skipped stage is no question
+    order = ("firecrawl", "brightdata", "jina", "tavily")
+    s, fakes = stages(None, gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), order=order)
+    out = run(s, doc(ARTICLE))
+    assert notes(out) == [NOTE_GONE.format(status=404)] and fakes[3].calls == 0
+
+
+# --- S8 interrupt ----------------------------------------------------------------------------------------
+
+
+def test_interrupted_stage_ends_the_chain_without_waiting_for_keenable(caplog):  # S8, N5, N20
+    lines = logged(caplog)
+    s, fakes = stages(err("Bright Data", "API 500", "api_500"), err("Jina", "interrupted", "interrupted"), doc(ARTICLE))
+    out = run(s, "pending")  # a running Keenable request is not awaited
+    assert out["error"] == "Bright Data: API 500; Jina: interrupted; Keenable: interrupted"
+    assert fakes[2].calls == 0
+    assert lines() == ["extract-chain news.example: brightdata=api_500 jina=interrupted keenable=interrupted"]
+
+
+def test_interrupt_falls_back_to_the_kept_result():  # S8, N8 (a)
+    s, _ = stages(doc("a" * 300), err("Jina", "interrupted", "interrupted"), doc(ARTICLE))
+    out = run(s, err("Keenable", "HTTP 500"))
+    reasons = "Bright Data: very short page (300 characters); Jina: interrupted; Keenable: interrupted"
+    assert notes(out) == [NOTE_LONGEST.format(provider="Bright Data", n=300, reasons=reasons)]
+
+
+# --- N3, S6 -------------------------------------------------------------------------------------------------
+
+
+def test_stage_without_fetch_is_skipped_with_its_reason(caplog):  # N3, L1
+    lines = logged(caplog)
+    s = [Stage("brightdata", "Bright Data", None, missing="no zone"), Stage("jina", "Jina", Fake(doc(ARTICLE)))]
+    out = run(s, doc(ARTICLE))
+    assert notes(out) == [NOTE_LIVE.format(provider="Jina", reasons="Bright Data: no zone")]
+    assert lines() == ["extract-chain news.example: brightdata=no_key jina=ok keenable=ref_ok"]
+
+
+def test_exception_in_a_stage_fails_only_that_stage(caplog):  # S6
+    lines = logged(caplog)
+    s, fakes = stages(Fake(exc=RuntimeError("boom")), doc(ARTICLE))
+    out = run(s, doc(ARTICLE))
+    assert notes(out) == [NOTE_LIVE.format(provider="Jina", reasons="Bright Data: RuntimeError")]
+    assert lines() == ["extract-chain news.example: brightdata=exception jina=ok keenable=ref_ok"]
+
+
+def broken_for(content):
+    real = chain.classify
+
+    def classify(doc, full_page=False):
+        if doc.get("content") == content:
+            raise KeyError("bug")
+        return real(doc, full_page)
+
+    return classify
+
+
+def test_unexpected_failure_fails_only_this_url(monkeypatch, caplog):  # S6
+    monkeypatch.setattr(chain, "classify", broken_for("BOOM"))
+    s, _ = stages(doc("BOOM"))
+    out = run(s, doc(ARTICLE))
+    assert out["error"] == "extract-chain: KeyError" and out["content"] == ""
+    assert "extract-chain news.example: chain failed: KeyError" in caplog.messages
+
+
+def test_unexpected_failure_while_logging_the_reference_does_not_raise(monkeypatch):  # S6: run_chain never raises
+    monkeypatch.setattr(chain, "classify", broken_for("REF"))
+    s, _ = stages(doc(ARTICLE))
+    out = run(s, doc("REF"))
+    assert out["url"] == URL
+
+
+# --- N20 / L1 log line --------------------------------------------------------------------------------------
+
+
+def test_log_line_with_suspects_and_keenable(caplog):  # N20
+    lines = logged(caplog)
+    s, _ = stages(doc("a" * 300), doc("Cookie, cookie. " + "a" * 600), err("Firecrawl", "API 500", "api_500"), None)
+    run(s, doc(ARTICLE))
+    assert lines() == [
+        "extract-chain news.example: brightdata=suspect_thin jina=suspect_consent firecrawl=api_500 "
+        "tavily=no_key keenable=ok"
     ]
 
 
-# --- V10 -----------------------------------------------------------------------------------------------
+def test_log_line_suspect_print_check_shorter(caplog):  # N20
+    lines = logged(caplog)
+    s, _ = stages(doc("Ausdruck erstellt. " + ARTICLE), doc("Enable JavaScript. " + ARTICLE), doc(ARTICLE[:600]))
+    run(s, doc(ARTICLE))
+    assert lines() == [
+        "extract-chain news.example: brightdata=suspect_print jina=suspect_check firecrawl=suspect_shorter keenable=ok"
+    ]
+
+
+def test_log_line_no_time(caplog):  # N20
+    lines = logged(caplog)
+    clock = Clock()
+    s, _ = stages(Fake(doc("a" * 300), then=lambda: setattr(clock, "now", clock.now + 165)), doc(ARTICLE))
+    run(s, doc("k" * 200), clock=clock)
+    assert lines() == ["extract-chain news.example: brightdata=suspect_thin jina=no_time keenable=suspect_thin"]
+
+
+@pytest.mark.parametrize(
+    ("reference", "outcome"),
+    [
+        (doc(ARTICLE), "ref_ok"),  # the reference was there, Keenable was not needed as a stage
+        (err("Keenable", "HTTP 500", "http_500"), "ref_http_500"),
+        ("pending", "pending"),
+        (None, "no_key"),
+    ],
+)
+def test_log_line_always_names_keenable(caplog, reference, outcome):  # N20: Keenable is always listed
+    lines = logged(caplog)
+    first = doc(ARTICLE) if reference != "pending" else doc(PAYWALL_TEXT)
+    run(stages(first)[0], reference)
+    assert lines()[-1].endswith(f" keenable={outcome}")
+
+
+def test_log_line_never_raises_or_shows_full_url(caplog):  # L1
+    lines = logged(caplog)
+
+    async def go(url):
+        return await run_chain(url, stages(doc(ARTICLE))[0], None, budget=170.0, clock=Clock())
+
+    out = asyncio.run(go("http://[::1"))
+    asyncio.run(go("file:///tmp/x?token=abc"))
+    asyncio.run(go(123))
+    assert out["error"] is None
+    assert lines() == [
+        "extract-chain <invalid url>: brightdata=ok keenable=no_key",
+        "extract-chain <no host>: brightdata=ok keenable=no_key",
+        "extract-chain <invalid url>: brightdata=ok keenable=no_key",
+    ]
+
+
+# --- V7, V10 -------------------------------------------------------------------------------------------------
+
+
+def test_pdf_note_redirect_note_and_final_url():  # V7, V10 after the source note (N18)
+    page = doc(ARTICLE, pdf_pages=(30, 120), final_url=OTHER)
+    s, _ = stages(err("Bright Data", "API 500"), err("Jina", "API 500"), page)
+    out = run(s, doc(ARTICLE))
+    assert notes(out) == [
+        NOTE_LIVE.format(provider="Firecrawl", reasons="Bright Data: API 500; Jina: API 500"),
+        NOTE_PDF.format(shown=30, total=120),
+        NOTE_REDIRECT.format(final=OTHER),
+    ]
+    assert out["metadata"] == {"sourceURL": URL, "finalURL": OTHER}
+
+
+def test_redirect_note_after_paywall_and_fallback_notes():  # N18: order of notes
+    s, _ = stages(doc(PAYWALL_TEXT, final_url=OTHER))
+    assert notes(run(s, doc(ARTICLE))) == [NOTE_PAYWALL, NOTE_REDIRECT.format(final=OTHER)]
+    s, _ = stages(doc("a" * 300, final_url=OTHER), None, None, None)
+    lines = notes(run(s, None))
+    assert lines[0].startswith("[extract-chain] No source passed") and lines[1] == NOTE_REDIRECT.format(final=OTHER)
+    s, _ = stages(*(err(name, "API 500") for name in NAMES.values()))
+    lines = notes(run(s, doc(ARTICLE, final_url=OTHER)))
+    assert lines[0].startswith("[extract-chain] Copy via Keenable") and lines[1] == NOTE_REDIRECT.format(final=OTHER)
 
 
 def redirected(requested, final):
-    """Returns the content of a TinyFish page with the given final URL."""
-    return asyncio.run(run_chain(requested, {**doc(ARTICLE), "final_url": final}, None, None))["content"]
+    async def go():
+        stage = Stage("firecrawl", "Firecrawl", Fake({**doc(ARTICLE), "final_url": final}))
+        return await run_chain(requested, [stage], None, budget=170.0, clock=Clock())
+
+    return asyncio.run(go())["content"]
 
 
 @pytest.mark.parametrize(
@@ -459,7 +793,7 @@ def redirected(requested, final):
         ("https://news.example/jobs", "https://news.example/en-US/"),
     ],
 )
-def test_redirect_note_added(requested, final):
+def test_redirect_note_added(requested, final):  # V10
     assert redirected(requested, final) == NOTE_REDIRECT.format(final=final) + "\n\n" + ARTICLE
 
 
@@ -470,14 +804,14 @@ def test_redirect_note_added(requested, final):
         ("https://www.news.example/artikel", "https://news.example/artikel"),
         ("https://news.example/artikel", "http://news.example/artikel"),  # scheme only
         ("https://news.example/artikel", "https://news.example/artikel/"),  # trailing slash
-        ("https://news.example/de", "https://news.example/de/"),  # same page, although a locale path
+        ("https://news.example/de", "https://news.example/de/"),
         ("https://news.example/artikel", "https://news.example/artikel?utm=1"),  # query
         ("https://news.example/artikel", "https://news.example/artikel#top"),  # fragment
         ("https://News.Example/Artikel", "https://news.example/artikel"),  # letter case
         ("https://news.example/", "https://news.example/de/"),  # requested path has no segment
         ("https://news.example/jobs", "https://news.example/jobs/list"),  # deeper path
         ("https://news.example/jobs", "https://news.example/deutsch/"),  # not locale-like
-        ("https://news.example/jobs", None),  # no final URL
+        ("https://news.example/jobs", None),  # no final URL (Bright Data, Jina, Tavily)
         ("https://news.example/jobs", ""),
         ("https://news.example/jobs", "/relative"),
         ("https://news.example/jobs", 123),  # not a string
@@ -485,11 +819,11 @@ def test_redirect_note_added(requested, final):
         ("http://[::1", OTHER),  # invalid requested URL
     ],
 )
-def test_no_redirect_note(requested, final):
+def test_no_redirect_note(requested, final):  # V10
     assert redirected(requested, final) == ARTICLE
 
 
-def test_redirect_url_cut_to_200_characters_and_one_line():
+def test_redirect_url_cut_to_200_characters_and_one_line():  # V10, V1
     final = "https://other.example/" + "a" * 300
     assert redirected(URL, final).splitlines()[0] == NOTE_REDIRECT.format(final=final[:200])
     assert redirected(URL, "https://other.example/a\nb c").splitlines()[0] == NOTE_REDIRECT.format(
@@ -497,22 +831,49 @@ def test_redirect_url_cut_to_200_characters_and_one_line():
     )
 
 
-def test_redirect_note_comes_after_the_other_notes():
-    page = {**doc(ARTICLE), "final_url": OTHER, "pdf_pages": (30, 120)}
-    lines = run(tf_error("timeout"), Fake(page), Fake())["content"].splitlines()
-    assert lines[:3] == [
-        NOTE_FIRECRAWL.format(reason="TinyFish: timeout"),
-        NOTE_PDF.format(shown=30, total=120),
-        NOTE_REDIRECT.format(final=OTHER),
-    ]
-    lines = asyncio.run(run_chain(URL, {**doc(PAYWALL_TEXT), "final_url": OTHER}, None, None))["content"].splitlines()
-    assert lines[:2] == [NOTE_PAYWALL, NOTE_REDIRECT.format(final=OTHER)]
-    thin = {**doc(SHORT), "final_url": OTHER}
-    lines = run(thin, Fake(doc(error="Firecrawl: API 500")))["content"].splitlines()
-    assert lines[:2] == [
-        NOTE_THIN_ALONE.format(n=len(SHORT), reason="Firecrawl: API 500"),
-        NOTE_REDIRECT.format(final=OTHER),
-    ]
-    keenable = {**doc(ARTICLE), "final_url": OTHER}
-    lines = run(doc(WALL_TEXT), None, Fake(keenable))["content"].splitlines()
-    assert lines[:2] == [NOTE_KEENABLE.format(reasons="TinyFish: consent wall"), NOTE_REDIRECT.format(final=OTHER)]
+# --- gaps found in the review against the spec (2026-10-18) -------------------------------------------
+
+
+@pytest.mark.parametrize("skipped", [err("Firecrawl", "API 402 (paused for another 3 h)", "paused"), "no_time"])
+def test_paused_or_skipped_firecrawl_was_not_asked(skipped):  # N6: only a request that went out counts
+    order = ("firecrawl", "brightdata", "jina", "tavily")
+    if skipped == "no_time":
+        clock = Clock()
+        s, fakes = stages(doc(ARTICLE), gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), order=order)
+        out = run(s, doc(ARTICLE, title="KE"), budget=5.0, clock=clock)  # below MIN_STAGE: every stage is skipped
+        assert [f.calls for f in fakes] == [0, 0, 0, 0]
+        assert out["title"] == "KE" and "Firecrawl: no time left" in notes(out)[0]  # Keenable's copy, already there
+        return
+    s, fakes = stages(skipped, gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), order=order)
+    out = run(s, doc(ARTICLE))
+    assert notes(out) == [NOTE_GONE.format(status=404)] and fakes[3].calls == 0
+
+
+def test_keenable_loses_a_tie_with_a_live_stage():  # N8 (a): Keenable is the last position
+    s, _ = stages(doc("a" * 300, title="BD"), None, None, None)
+    out = run(s, doc("k" * 300, title="KE"))
+    assert out["title"] == "BD"
+
+
+def test_gone_copy_that_is_thin_is_taken():  # N6, N17a: a short copy still has content
+    s, _ = stages(gone("Bright Data", 404), gone("Jina", 410))
+    out = run(s, doc("k" * 200, title="KE"))
+    assert out["title"] == "KE" and notes(out) == [NOTE_GONE.format(status=410)]
+
+
+def test_keenable_consent_page_is_no_reference():  # N7.5, K3: only an ok or thin copy is a reference
+    wall = doc("Cookies zustimmen. Alle akzeptieren. " + "Datenschutzeinstellungen " * 400)
+    s, fakes = stages(doc(ARTICLE, title="BD"), doc(ARTICLE))
+    out = run(s, wall)
+    assert out["title"] == "BD" and fakes[1].calls == 0  # the longer consent page does not make Bright Data suspect
+
+
+def test_gone_without_keenable_answer_names_keenable():  # N6: the reasons list Keenable when it did not answer
+    clock = Clock()
+
+    def used_up():
+        clock.now += 20.0  # Jina uses up the budget: no time is left to wait for Keenable
+
+    s, _ = stages(gone("Bright Data", 404), Fake(gone("Jina", 404), then=used_up))
+    out = run(s, "pending", budget=20.0, clock=clock)
+    assert out["error"].endswith("Keenable: no time left")

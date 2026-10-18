@@ -1,21 +1,20 @@
 # Troubleshooting
 
-How failures show up, what the log line means, typical problems with their fixes, and the edge cases the plugin handles on purpose. Requirement IDs refer to [design.md](design.md).
+How failures show up, what the log line means, typical problems with their fixes, and the edge cases the plugin handles on purpose. Requirement IDs refer to [design.md](design.md). This file describes 0.3.0; for the TinyFish chain of v0.1–v0.2 see the file at tag `v0.2.6`.
 
 ## Where to look
 
 | Place | What you find |
 |---|---|
-| The tool result the model sees | Per URL either content (possibly with `[extract-chain]` notes at the top) or an `error` such as `TinyFish: bot_blocked; Firecrawl: target HTTP 403; Keenable: Gateway timeout` |
-| `logs/agent.log` in the Hermes home (INFO) | One line per URL: `extract-chain <host>: tinyfish=… firecrawl=… keenable=…` |
-| `logs/errors.log` (WARNING) | Plugin load failures, the website-policy import warning, the plugin's `chain failed` warning, the start of a pause (`… paused for <seconds> s`), Hermes' extract timeouts |
+| The tool result the model sees | Per URL either content (possibly with `[extract-chain]` notes at the top) or an `error` listing the reason of every stage, e.g. `Jina: target HTTP 403; Bright Data: target HTTP 403; Firecrawl: target HTTP 403; Keenable: Gateway timeout` |
+| `logs/agent.log` in the Hermes home (INFO) | One line per URL: `extract-chain <host>: jina=… brightdata=… firecrawl=… keenable=…` (L1; `tavily=…` appears only if Tavily is in the order) |
+| `logs/errors.log` (WARNING) | Plugin load failures, the website-policy import warning, the plugin's `chain failed` warning, the start of a pause (`… paused for <seconds> s`), an invalid `EXTRACT_CHAIN_ORDER`, a `web.extract_timeout` below 120 s, Hermes' extract timeouts |
 | `hermes plugins list` | Whether `extract-chain` is enabled and loaded, or why it failed to load |
 
-Count how often each stage was needed, e.g. to watch Firecrawl credits:
+Count how often each stage was needed and how it ended, e.g. to watch credits:
 
 ```bash
-grep -c "extract-chain .*firecrawl=" logs/agent.log
-grep -o "firecrawl=[a-z_0-9]*" logs/agent.log | sort | uniq -c
+grep -oE "(jina|brightdata|firecrawl|tavily|keenable)=[a-z_0-9]*" logs/agent.log | sort | uniq -c
 ```
 
 ## How failures surface
@@ -29,34 +28,59 @@ grep -o "firecrawl=[a-z_0-9]*" logs/agent.log | sort | uniq -c
 | One URL | Bug in the plugin raises while handling that URL | `error`: `extract-chain: <exception class>`; the other URLs of the call keep their results | `errors.log`: `extract-chain <host>: chain failed: <exception class>` |
 | One URL | Hermes' policy check raises for the URL or its final URL | `error`: `Blocked by website policy: the check failed for this URL (<exception class>)`; the content is withheld | `errors.log`: `extract-chain: website policy check failed for a URL (blocked): <exception class>` |
 | One URL | Policy block | `error` with Hermes' block message plus a `blocked_by_policy` field | none; Hermes' policy logs |
-| One URL | All stages failed | `error` listing every stage's reason | the L1 line shows each stage's code |
-| One URL | A later stage delivered | content with a note naming the source and why the earlier stages failed | the L1 line |
+| One URL | No stage delivered | the longest suspect result, a consent-wall or bot-check page with a note, or an `error` listing every stage's reason (K8) | the L1 line shows each stage's outcome |
+| One URL | A later stage delivered | content with a note naming the source and why the earlier stages were passed over | the L1 line |
 
 Problems with a single URL never raise and never fail other URLs of the same call (S6).
 
 ## Log line codes (L1)
 
-Each stage that ran appears as `<stage>=<outcome>`. The outcomes are the classes `ok`, `paywall`, `wall`, `empty`, `challenge` (bot-check page) and `thin` (very short page). Errors show a short code.
+Each stage appears as `<stage>=<outcome>`, in order, Keenable last. The outcomes are the classes `ok`, `thin`, `paywall`, `wall`, `empty` and `challenge` (bot-check page), a check, or a short error code.
+
+**Checks** (any stage; the stage was passed over and its result kept for the fallback, K4, K8):
+
+| Code | Meaning |
+|---|---|
+| `suspect_thin` | Under 500 visible characters (C1) |
+| `suspect_print` | A print view (C2) |
+| `suspect_check` | Under 3,000 characters with a JavaScript or bot-check hint (C3) |
+| `suspect_consent` | Under 1,500 characters with repeated consent text (C4) |
+| `suspect_shorter` | Keenable's copy is at least 1.5 times as long (C5) |
+
+**Per stage:**
 
 | Code | Stage | Meaning | Chain continues? |
 |---|---|---|---|
-| `bot_blocked` | TinyFish | Bot protection (Cloudflare, DataDome …) | yes → Firecrawl |
-| `target_http_error` | TinyFish | Site answered non-2xx (not 404/410); seen at faz.net and another news site | yes → Firecrawl |
-| `timeout`, `target_unreachable`, `proxy_error`, `empty_content` | TinyFish | Fetch problems on TinyFish's side | yes → Firecrawl |
-| `page_not_found`, `login_required`, `invalid_url`, `invalid_redirect_url`, `content_too_large` | TinyFish | Final: another provider would not do better | no, the error is returned |
-| `http_401` / `http_402` / `http_429` / `http_5xx` | TinyFish, Keenable | API problem: bad key / quota or credits used up / rate limit / provider outage | yes, to the next stage |
-| `api_401` / `api_402` / `api_408` / `api_429` / `api_5xx` | Firecrawl | Same for Firecrawl's API | yes → Keenable |
-| `target_403`, `target_404`, … | Firecrawl | Firecrawl reached the site, the site refused | yes → Keenable |
-| `http_4xx` / `http_5xx` with a message | Keenable | Keenable could not provide the page; the error text carries its message, e.g. *The page is behind a login or paywall* (`Unprocessable entity`), *The page was reached but content could not be extracted*, *The target page took too long to respond* (`Gateway timeout`), *The target server denied access to this URL* (`Upstream forbidden`) | last stage |
-| `timeout` | any | The plugin's own deadline (40/40/25 s), an httpx timeout or the provider's timeout | yes |
+| `api_401` | Jina, Bright Data, Firecrawl, Tavily | Key wrong or disabled | yes |
+| `api_400` | Bright Data | Zone unknown, or the URL was refused as invalid | yes |
+| `api_402` | Jina, Bright Data, Firecrawl, Tavily | Quota or credits used up; the stage pauses for 24 h (K7) | yes |
+| `api_432`, `api_433` | Tavily (only if enabled) | Plan limit or pay-as-you-go limit reached; pause (K7) | yes |
+| `api_429` | Jina, Firecrawl, Tavily | Rate limit; no pause. Jina without a key allows 20 requests per minute | yes |
+| `api_422` | Jina | Seen in tests; meaning not documented | yes |
+| `api_200` | Firecrawl | Firecrawl answered 200 without `success: true` | yes |
+| `api_5xx` | Jina, Bright Data, Firecrawl, Tavily | Provider outage | yes |
+| `brd_<code>` | Bright Data | Unlocker error with Bright Data's code (A1), e.g. `brd_proxy_error` (host not resolvable; also seen for a blocked government site), `brd_client_10110` or `brd_sr_rate_limit` (rate limits, no pause); `brd_client_10020`, `brd_client_10100`, `brd_client_10002` pause the stage (account suspended, zone limit, zone not found) | yes |
+| `brd_unlocker` | Bright Data | Unlocker error without a readable code | yes |
+| `target_<status>` | Jina, Bright Data, Firecrawl | The service reached the site, the site answered with this status. Two `target_404`/`target_410` before Firecrawl was asked end the live stages (K9) | yes, except K9 |
+| `failed` | Tavily (only if enabled) | Tavily listed the URL in `failed_results`; its text is in the error the model sees | yes |
+| `no_result` | Tavily (only if enabled) | Tavily's reply named no result | yes |
+| `http_<status>` | Keenable | Keenable could not provide the page; the error text carries its message, e.g. *The page is behind a login or paywall* (`Unprocessable entity`), *The target page took too long to respond* (`Gateway timeout`), *The target server denied access to this URL* (`Upstream forbidden`). `http_402` pauses Keenable (K7) | last stage |
+| `malformed` | any | The API answered 2xx with something that is no JSON object, or with an empty one | yes |
+| `timeout` | any | The stage's deadline (A0), an httpx timeout or the provider's own timeout | yes |
 | `ConnectError`, `ProxyError`, … | any | Network: DNS, firewall, proxy refused the connection, TLS | yes |
-| `fetch_failed` | TinyFish | TinyFish named no code for the URL, or sent a text instead of a code; the text is in the error the model sees | yes → Firecrawl |
-| `malformed` | TinyFish, Keenable | The provider's API answered 2xx with something that is no JSON object, or with an empty one (for TinyFish this fails all URLs of the request) | yes, to the next stage |
-| `no_result` | TinyFish | TinyFish's reply did not mention the URL (see *Edge cases*, redirects) | yes → Firecrawl |
-| `no_key` | any | Key not set in the profile | stage skipped |
-| `paused` | any | The provider's API answered HTTP 402 earlier (quota or credits used up); no request is sent until the pause ends (K7) | stage skipped |
-| `interrupted` | Firecrawl, Keenable | The user stopped the turn | stage skipped |
-| `exception` | Firecrawl, Keenable | Unexpected error inside the stage (bug); details in the error text | yes |
+| `exception` | any | Unexpected error inside the stage (bug); details in the error text | yes |
+| `no_key` | any | Key not set; for Bright Data also a missing zone (`Bright Data: no zone`) | stage skipped |
+| `no_time` | any | Less than 10 s of the URL's budget left (Z1); for Keenable: its copy was not ready in the time left | stage skipped |
+| `paused` | any | The provider's API reported a used-up quota earlier; no request until the pause ends (K7) | stage skipped |
+| `interrupted` | any | The user stopped the turn (S8) | stage skipped |
+
+**Keenable only, when the URL ended before its turn (K3):**
+
+| Code | Meaning |
+|---|---|
+| `ref_<outcome>` | Its reference copy had arrived; the outcome is its class or error code, e.g. `ref_ok`, `ref_http_422` |
+| `pending` | Its request was still running and was cancelled |
+| `gone_copy` | Two live stages reported 404/410, and Keenable's copy was returned (K9, V14) |
 
 ## Typical problems
 
@@ -68,29 +92,35 @@ The plugin is not loaded. Check, in this order:
 3. `hermes plugins list` and `errors.log` show the reason: an import error or a Hermes version below 0.21.
 4. Hermes or the gateway was restarted after installing.
 
-**`tinyfish=http_401` on every URL.**
-The TinyFish key is wrong or missing in the profile's `.env`. Hermes reads keys per profile; a key exported in the shell may not reach a gateway or a container. While this lasts, every URL goes to Firecrawl and costs credits.
+**`brightdata=no_key` although the key is set.**
+`BRIGHTDATA_UNLOCKER_ZONE` is missing; the error the model sees says `Bright Data: no zone`. Put the name of your Web Unlocker zone into the profile's `.env`. A zone name that Bright Data does not know gives `api_400` (*zone … not found*) instead, a disabled zone `brd_client_10002` and a pause.
 
-**`tinyfish=http_402`.**
-The free daily allowance is used up and the TinyFish wallet is empty. Wait for the daily reset or top up. In the meantime Firecrawl takes over and its credits drain quickly. After the 402 the plugin skips TinyFish until 00:05 UTC (`tinyfish=paused`, K7).
+**`…=api_401` on every URL.**
+The key is wrong or missing in the profile's `.env`. Hermes reads keys per profile; a key exported in the shell may not reach a gateway or a container. While this lasts, every URL goes on to the next stage and costs its quota.
 
-**`tinyfish=http_429` / `firecrawl=api_429`.**
-Rate limits of the providers' plans ([evaluation.md](evaluation.md#free-tiers-and-costs-vendor-pages-2026-10-09)). Agents and profiles that share a key share the limit.
+**`jina=api_429`.**
+Jina's limit without a key is 20 requests per minute, counted per IP. Several agents behind one address share it. Set `JINA_API_KEY`; no pause is started, the chain goes on to Bright Data (Jina is the first stage by default, so a 429 shows up often when several agents share one address).
 
-**`firecrawl=api_402`.**
-Firecrawl credits are exhausted. URLs that TinyFish cannot fetch now end up at Keenable, as index copies or not at all. Top up or wait for the monthly reset. After the 402 the plugin skips Firecrawl for 24 hours (`firecrawl=paused`, K7); the same holds for Keenable.
+**`brightdata=brd_proxy_error` on government or other public-sector sites.**
+Without KYC, Bright Data refuses government sites and some other categories, and honours robots.txt. Expected; the other stages fetch these pages (D33).
+
+**`…=no_time`.**
+The URL's budget (Z1) was used up, mostly by a slow Bright Data request (up to 90 s) after a failed Jina request, and further stages. The fallback (K8) then returns what was kept. If it happens often, check `web.extract_timeout`: with less than 180 the budget is smaller than 170 s.
+
+**`Extract timed out after <n>s via extract-chain`, or the warning `web.extract_timeout is <n> s; 180 s are recommended`.**
+`web.extract_timeout` is too small for the chain. Set it to 180 (I2). The plugin keeps each URL 10 s below the setting, but Hermes discards the whole call when the setting is reached.
 
 **`…=paused` although the credits are back.**
-A pause does not notice a top-up. It ends by itself (TinyFish at 00:05 UTC, the others after 24 hours, K7); to use the stage at once, restart Hermes or the gateway. `errors.log` shows when a pause began: `extract-chain: Firecrawl paused for 86400 s (api_402)`.
+A pause does not notice a top-up. It ends after 24 hours (K7); to use the stage at once, restart Hermes or the gateway. `errors.log` shows when a pause began: `extract-chain: Firecrawl paused for 86400 s (api_402)`.
 
-**`firecrawl=timeout` only in calls with several URLs.**
-Firecrawl's free plan scrapes 2 pages at a time and queues the rest. Queue time counts against the 30 s timeout. The URL moves on to Keenable; this is expected (K6).
+**Warning `EXTRACT_CHAIN_ORDER has unknown or repeated names`.**
+A name in the list is misspelt or repeated. The warning names the order used. Valid names: `jina`, `brightdata`, `firecrawl`, `tavily`, `keenable`. Tavily is not in the default order; it runs only if you name it.
 
 **`keenable=http_401` / `http_403`.**
-The Keenable key is invalid or disabled. Consent walls (e.g. golem.de, derstandard.at) then stay unresolved and come back with the note *Consent wall detected …*.
+The Keenable key is invalid or disabled. Without a reference copy, check C5 is off, consent walls stay unresolved and come back with the note *Consent wall detected …*.
 
 **All stages fail with `ConnectError` or `ProxyError`.**
-The host cannot reach the APIs. Allow HTTPS to `api.fetch.tinyfish.ai`, `api.firecrawl.dev` and `api.keenable.ai`.
+The host cannot reach the APIs. Allow HTTPS to `r.jina.ai`, `api.brightdata.com`, `api.firecrawl.dev` and `api.keenable.ai`, and to `api.tavily.com` if Tavily is in your order (I4).
 
 - The plugin honours `HTTPS_PROXY` and `NO_PROXY`.
 - `ProxyError` means the proxy refused the connection, typically a missing allowlist entry.
@@ -101,48 +131,46 @@ Hermes trusts the operating system's certificate store and installs this process
 **Failed URLs come back with content but without any note.**
 The keyless rescue is on. When every URL of a call fails, Hermes silently retries with anonymous providers. Set `web.keyless_rescue: false`.
 
-**`Extract timed out after <n>s via extract-chain`.**
-`web.extract_timeout` is below the chain's worst case (105 s). Set it to at least 110; the default is 120.
-
 **A normal article gets a paywall or consent-wall note.**
 A false alarm of the keyword rules, e.g. in an article *about* paywalls or cookie banners. Nothing to configure. Please report the URL.
 
-- A false wall sends the URL to Keenable. The text is then Keenable's copy, with its note.
+- A false wall sends the URL to the next stage.
 - A false paywall only adds the note; the text is complete.
 
+**Many URLs go past the first stage (`suspect_shorter`).**
+Check C5 fires when Keenable's copy is much longer, also on complete pages where the copy carries more around the article. It costs a request, not a result (D29).
+
 **The same wrong or stale result keeps coming back.**
-Hermes caches successful results, notes included, for `web.cache_ttl_minutes` (default 20). This includes a consent page returned with the wall note. Wait, or lower the TTL.
+Hermes caches successful results, notes included, for `web.cache_ttl_minutes` (default 20). This includes a consent page returned with the wall note. Jina and Firecrawl may also serve copies up to an hour old (A7, D7). Wait, or lower the TTL.
 
 **Every URL fails with `Blocked by website policy: extract-chain cannot load Hermes' website blocklist …`.**
 A Hermes update moved the policy module, and the plugin fetches nothing without the blocklist (S7). `errors.log` shows `extract-chain: tools.website_policy not importable; every URL refused` for each call. Update the plugin; until then, set `web.extract_backend` to another provider.
 
-**Firecrawl credits drain faster than expected.**
-Firecrawl is only used when TinyFish fails. Common causes:
+**Credits drain faster than expected.**
+Jina and Keenable are asked for every URL (default order); the later stages only when earlier ones fail or are suspect. Common causes for Firecrawl:
 
-- sites that block TinyFish (`bot_blocked`: stern.de, Stack Overflow and the whole Stack Exchange network in our tests; `target_http_error`: faz.net);
+- sites that block Jina and Bright Data;
 - PDFs, which cost 1 credit per page (capped at 30, A2);
 - target 403/404 pages, which Firecrawl bills when it returns a document.
 
-The `firecrawl=` counts in the log show which sites cause it.
+The counts per stage in the log show which sites cause it.
 
 ## Edge cases (behaviour by design)
 
 | Situation | Behaviour |
 |---|---|
 | Duplicate URLs in one call | Fetched once, returned at every position as an entry of its own (S5). |
-| More than 10 URLs | Split into TinyFish batches of 10, sent concurrently. Hermes' `web_extract` passes at most 5. |
-| Redirect, single URL | TinyFish's entry is used even if it names the final URL. |
-| Redirect inside a multi-URL batch | If TinyFish reports only the final URL, the input URL gets `no_result` and goes to Firecrawl (one credit). Not observed in tests. |
+| Redirect | Jina, Bright Data and Tavily (if enabled) follow redirects themselves and report no final URL: no note, and the blocklist sees only the input URL. Firecrawl and Keenable report the final URL: note V10 where it points to another page, and the blocklist is checked on it (S7). |
 | Redirect to a blocked site | The result is replaced by Hermes' policy block entry (S7). |
 | Website blocklist | Checked before any request; blocked URLs reach no provider. |
-| Consent wall, Keenable fails | The consent page comes back with the wall note listing all reasons. Hermes caches it like any success. |
-| Firecrawl returns an empty `<body></body>` | Treated as empty; moves on to Keenable. |
-| Target 403/404 via Firecrawl | Error `target HTTP <status>`; Firecrawl still bills one credit. |
-| Long PDF where TinyFish fails | Firecrawl reads the first 30 pages; the note says *PDF cut to the first 30 of N pages*. |
-| `content_too_large`, `login_required`, `page_not_found` | Final; no other provider is asked. |
-| Page that loads with status 200 but shows "Access denied" or a challenge text | Recognised as a bot-check page if it is shorter than 1,500 visible characters and contains a phrase of the list (E7); the chain moves on to Firecrawl and Keenable. If neither has the page, the bot-check page comes back with the note V11. A bot check in other words, or a longer one, is not recognised. |
-| Missing TinyFish key | The provider reports itself unavailable, and Hermes hides `web_extract` unless another web backend is available. If the tool is still offered, stage 1 fails with `no_key` for all URLs and the chain continues with Firecrawl. |
-| Missing Firecrawl or Keenable key | That stage is skipped (`no_key`). |
+| Consent wall everywhere | The first consent page comes back with the wall note listing all reasons, unless a suspect result was kept (K8). Hermes caches it like any success. |
+| Page gone (404/410) | Two live stages with 404 or 410 before Firecrawl was asked end the live stages; Keenable's copy comes back with V14, or the error lists the reasons (K9). After Firecrawl the chain runs to its end. |
+| Firecrawl returns an empty `<body></body>` | Treated as empty; moves on. |
+| Long PDF via Firecrawl | Firecrawl reads the first 30 pages; the note says *PDF cut to the first 30 of N pages*. Jina, Bright Data and Tavily (if enabled) read PDFs without a cap. |
+| Page that loads with status 200 but shows "Access denied" or a challenge text | Recognised as a bot-check page if it is shorter than 1,500 visible characters and contains a phrase of the list (E7), or as suspect below 3,000 characters (C3); the chain moves on. If no stage has the page, it comes back with the note V11. |
+| URL with a fragment (`#…`) | Jina does not receive the fragment; pages that route by fragment may come back as the start page. |
+| No key at all | The provider reports itself unavailable, and Hermes hides `web_extract` unless another web backend is available. Jina alone does not make it available (S2). |
+| Missing key of one stage | That stage is skipped (`no_key`). |
 | User stops the turn | No further requests; remaining stages report `interrupted` (S8). |
 | Hermes timeout | All URLs of the call fail, also those that had finished (Hermes discards the whole call). |
 
@@ -150,7 +178,7 @@ Paywalls (detected or not, English ones), the Hermes cache and privacy: [design.
 
 ## Cost and quota safety
 
-Hard caps and what happens at an exhausted quota: [README, Costs and quotas](../README.md#costs-and-quotas). Free tiers: [evaluation.md](evaluation.md#free-tiers-and-costs-vendor-pages-2026-10-09). Where to switch off auto top-up: TinyFish wallet auto-reload (balance via `GET /v1/wallet`); Firecrawl auto-recharge (dashboard, paid plans); Keenable auto top-up (console). Keenable allows 10 requests/s.
+Free allowances, billing and hard caps: [README, Costs and quotas](../README.md#costs-and-quotas). An exhausted quota pauses that stage for 24 hours (K7); the chain continues with the others.
 
 ## Reporting a problem
 

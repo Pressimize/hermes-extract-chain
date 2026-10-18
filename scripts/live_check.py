@@ -5,16 +5,16 @@ Run with the Python interpreter of a Hermes installation (isolated mode), e.g. H
     <hermes python> -I scripts/live_check.py URLS_JSON OUTDIR PROFILE [PACE_S]
 
 URLS_JSON  list of {"id", "url", ...}; entries with the same "group" value are sent in one web_extract call.
-PROFILE    Hermes profile with the plugin installed, web.extract_backend: extract-chain and
-           web.keyless_rescue: false. Its .env provides the keys.
+PROFILE    Hermes profile with the plugin installed, web.extract_backend: extract-chain,
+           web.keyless_rescue: false and web.extract_timeout: 180 (N9). Its .env provides the keys.
 PACE_S     wait after each call, per URL of the call (default 7.5 s: below 8 URLs/min per provider).
 
 Hermes is found under %LOCALAPPDATA%/hermes, i.e. Hermes Desktop on Windows (override with HERMES_ROOT).
 Writes OUTDIR/results.jsonl with the tool output as the model sees it (article texts: keep it outside git) and
 prints a summary without texts.
 
-KEENABLE_NOTE copies the start of chain.NOTE_KEENABLE on purpose (the script runs with -I in Hermes' Python and
-does not import the plugin); it must follow changes to that note.
+KEENABLE_NOTE copies the start of chain.NOTE_COPY for Keenable on purpose (the script runs with -I in Hermes'
+Python and does not import the plugin); it must follow changes to that note.
 """
 
 import asyncio
@@ -28,7 +28,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 ROOT = os.environ.get("HERMES_ROOT") or os.path.join(os.environ.get("LOCALAPPDATA", ""), "hermes")
-KEENABLE_NOTE = "[extract-chain] Copy from Keenable's index"
+KEENABLE_NOTE = "[extract-chain] Copy via Keenable"
+TIME_LIMIT = 180  # N9: web.extract_timeout
+PROVIDERS = ("brightdata", "jina", "firecrawl", "tavily", "keenable")
 
 
 def hermes_env(profile):
@@ -65,7 +67,7 @@ def calls(cases):
 
 
 def check_call(group, results, lines):
-    """L1 line to show per case, and problems: a Keenable result (L1 keenable=ok/paywall) without note V4.
+    """L1 line to show per case, and problems: a Keenable result (L1 keenable=ok/paywall) without note N17.
 
     L1 lines name only the host, so cases that share a host are checked together: that host must have at least
     as many results with the note as lines with a Keenable result.
@@ -123,7 +125,7 @@ def main():
             fh.flush()
             rows.append(row)
 
-            if duration >= 120:
+            if duration >= TIME_LIMIT:
                 problems.append(f"{row['ids']}: {duration} s")
             if [r.get("url") for r in results] != urls:
                 problems.append(f"{row['ids']}: order/count {[r.get('url') for r in results]}")
@@ -140,8 +142,8 @@ def main():
     stamps = defaultdict(list)
     for row in rows:
         for ts, line in row["log"]:
-            for provider in ("tinyfish", "firecrawl", "keenable"):
-                if f"{provider}=" in line:
+            for provider in PROVIDERS:
+                if f"{provider}=" in line and f"{provider}=no_key" not in line:
                     stamps[provider].append(ts)
     for provider, ts in stamps.items():
         ts.sort()

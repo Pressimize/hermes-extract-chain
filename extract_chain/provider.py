@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import logging
@@ -16,13 +17,32 @@ import httpx
 from agent.web_search_provider import WebSearchProvider, get_provider_env
 
 from . import fetchers
-from .chain import Fetch, failure, run_chain
+from .chain import MIN_STAGE, URL_BUDGET_MAX, Fetch, Stage, failure, run_chain
 
 NAME = "extract-chain"
-KEYS = ("TINYFISH_API_KEY", "FIRECRAWL_API_KEY", "KEENABLE_API_KEY")
-PAUSE_STATUS = 402  # K7: the provider's API says the quota or the credits are used up
-DAY = 86400
-TINYFISH_RESET_GRACE = 300  # K7: clocks differ, so TinyFish is asked again five minutes after its daily renewal
+# N2, D-1 (Andre 2026-10-18): Jina first (benchmark set 3: 170 against 160 complete with Bright Data first; several
+# agents share one Jina rate limit, Bright Data then catches its 429s); Tavily only on request (no effect measured).
+DEFAULT_ORDER = ("jina", "brightdata", "firecrawl", "keenable")
+ORDER_ENV = "EXTRACT_CHAIN_ORDER"
+NAMES = {
+    "brightdata": "Bright Data",
+    "jina": "Jina",
+    "firecrawl": "Firecrawl",
+    "tavily": "Tavily",
+    "keenable": "Keenable",
+}
+KEYS = {
+    "brightdata": "BRIGHTDATA_API_KEY",
+    "jina": "JINA_API_KEY",  # optional: Jina runs without a key (N3)
+    "firecrawl": "FIRECRAWL_API_KEY",
+    "tavily": "TAVILY_API_KEY",
+    "keenable": "KEENABLE_API_KEY",
+}
+ZONE_ENV = "BRIGHTDATA_UNLOCKER_ZONE"
+DAY = 86400  # K7: a used-up quota pauses a stage for 24 hours
+BUDGET_MARGIN = 10.0  # N9: the URL budget stays this far below web.extract_timeout
+BUDGET_FALLBACK = 110.0  # N9: Hermes' default of 120 s minus the margin, when the setting cannot be read
+TIMEOUT_LOW = 120.0  # N9: below this, a warning once per process
 log = logging.getLogger(__name__)
 
 # S7: Hermes applies its website blocklist inside each provider, not centrally, so the plugin calls it itself.
@@ -45,6 +65,15 @@ except ImportError:
         return False
 
 
+_warned: set[str] = set()  # N2, N9: warnings once per process
+
+
+def _warn_once(topic: str, message: str, *args: object) -> None:
+    if topic not in _warned:
+        _warned.add(topic)
+        log.warning(message, *args)
+
+
 def _env(name: str) -> str:
     try:
         return get_provider_env(name)
@@ -52,9 +81,32 @@ def _env(name: str) -> str:
         return ""
 
 
-def _pause_seconds(provider: str, now: float) -> float:
-    """K7: 24 h; TinyFish only until 00:05 UTC, just after its daily allowance renews."""
-    return DAY - (now - TINYFISH_RESET_GRACE) % DAY if provider == "TinyFish" else DAY
+def stage_order(value: str) -> list[str]:
+    """N2: stage ids from EXTRACT_CHAIN_ORDER; unknown names and duplicates are dropped, Keenable goes last."""
+    if not value.strip():
+        return list(DEFAULT_ORDER)
+    names = [part.strip().lower() for part in value.split(",") if part.strip()]
+    known = [n for n in dict.fromkeys(names) if n in NAMES and n != "keenable"]
+    invalid = len(set(names)) != len(names) or any(n not in NAMES for n in names)  # duplicates, Keenable included
+    if invalid or not known:
+        _warn_once("order", "extract-chain: %s has unknown or repeated names; using %s", ORDER_ENV,
+                   ",".join(known + ["keenable"]) if known else ",".join(DEFAULT_ORDER))  # fmt: skip
+    return known + ["keenable"] if known else list(DEFAULT_ORDER)
+
+
+def url_budget() -> float:
+    """N9: time per URL, from Hermes' web.extract_timeout (0 or below: no cap in Hermes)."""
+    try:
+        from tools.web_tools import _load_web_config
+
+        value = float(_load_web_config().get("extract_timeout", 120))
+    except Exception:  # an incompatible Hermes version or an unreadable setting
+        return BUDGET_FALLBACK
+    if value <= 0:
+        return URL_BUDGET_MAX
+    if value < TIMEOUT_LOW:
+        _warn_once("timeout", "extract-chain: web.extract_timeout is %.0f s; 180 s are recommended", value)
+    return max(MIN_STAGE, min(URL_BUDGET_MAX, value - BUDGET_MARGIN))
 
 
 def _slot(provider: str, key: str) -> tuple[str, str]:
@@ -90,10 +142,14 @@ def _blocked(url: str, entry_url: str | None = None) -> dict | None:
 
 class ExtractChainProvider(WebSearchProvider):
     def __init__(
-        self, transport: httpx.AsyncBaseTransport | None = None, clock: Callable[[], float] = time.time
+        self,
+        transport: httpx.AsyncBaseTransport | None = None,
+        clock: Callable[[], float] = time.time,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._transport = transport  # tests only; Hermes instantiates without arguments
-        self._clock = clock  # wall clock, because TinyFish's pause ends at 00:05 UTC
+        self._clock = clock  # wall clock for pauses (K7)
+        self._monotonic = monotonic  # time budget of a URL (N9)
         self._paused: dict[tuple[str, str], tuple[float, str]] = {}  # K7: _slot(provider, key) -> (until, reason)
 
     @property
@@ -102,10 +158,13 @@ class ExtractChainProvider(WebSearchProvider):
 
     @property
     def display_name(self) -> str:
-        return "Extract chain (TinyFish, Firecrawl, Keenable)"
+        return "Extract chain (Jina, Bright Data, Firecrawl, Keenable)"
 
     def is_available(self) -> bool:
-        return bool(_env("TINYFISH_API_KEY"))
+        """N3: at least one keyed stage of the order can run (Jina alone does not count; Keenable always runs)."""
+        order = stage_order(_env(ORDER_ENV))
+        bright = "brightdata" in order and bool(_env(KEYS["brightdata"]) and _env(ZONE_ENV))
+        return bright or any(s in order and _env(KEYS[s]) for s in ("firecrawl", "tavily", "keenable"))
 
     def supports_search(self) -> bool:
         return False
@@ -133,28 +192,13 @@ class ExtractChainProvider(WebSearchProvider):
         return [copy.deepcopy(done[u]) if isinstance(u, str) else failure(u, NOT_A_URL) for u in urls]
 
     async def _chain(self, urls: list[str]) -> dict[str, dict]:
-        tf_key, fc_key, ke_key = (_env(k) for k in KEYS)
+        keys = {stage: _env(name) for stage, name in KEYS.items()}
+        zone = _env(ZONE_ENV)
+        order = stage_order(_env(ORDER_ENV))
+        budget = url_budget()
         # A5: no redirects, so a key never travels to another host
         async with httpx.AsyncClient(transport=self._transport, follow_redirects=False) as client:
-            if not tf_key:
-                first = {url: {"error": "TinyFish: no API key", "code": "no_key"} for url in urls}
-            elif paused := self._paused_doc("TinyFish", tf_key):
-                first = {url: dict(paused) for url in urls}
-            else:
-                first = await fetchers.tinyfish(client, urls, tf_key)
-                for doc in first.values():
-                    self._watch("TinyFish", tf_key, doc)
-            done = await asyncio.gather(
-                *(
-                    run_chain(
-                        url,
-                        first[url],
-                        self._stage("Firecrawl", partial(fetchers.firecrawl, client, url, fc_key), fc_key),
-                        self._stage("Keenable", partial(fetchers.keenable, client, url, ke_key), ke_key),
-                    )
-                    for url in urls
-                )
-            )
+            done = await asyncio.gather(*(self._one(client, url, keys, zone, order, budget) for url in urls))
         results = {}
         for url, result in zip(urls, done, strict=True):
             final = result["metadata"].get("finalURL")
@@ -163,15 +207,53 @@ class ExtractChainProvider(WebSearchProvider):
             results[url] = blocked or result
         return results
 
-    def _stage(self, provider: str, fetch: Fetch, key: str) -> Fetch | None:
-        """Stage call for run_chain, or None without a key (K3, K4). No request on interrupt (S8) or pause (K7)."""
-        if not key:
-            return None
+    async def _one(
+        self, client: httpx.AsyncClient, url: str, keys: dict, zone: str, order: list[str], budget: float
+    ) -> dict:
+        """N5: start Keenable's request, run the other stages, and never leave the Keenable request running."""
+        calls = {
+            "brightdata": partial(fetchers.brightdata, client, url, keys["brightdata"], zone),
+            "jina": partial(fetchers.jina, client, url, keys["jina"]),
+            "firecrawl": partial(fetchers.firecrawl, client, url, keys["firecrawl"]),
+            "tavily": partial(fetchers.tavily, client, url, keys["tavily"]),
+        }
+        caps = {
+            "brightdata": fetchers.BRIGHTDATA_DEADLINE,
+            "jina": fetchers.JINA_DEADLINE,
+            "firecrawl": fetchers.FIRECRAWL_DEADLINE,
+            "tavily": fetchers.TAVILY_DEADLINE,
+        }
+        stages = []
+        for sid in order:
+            if sid == "keenable":
+                continue
+            needs_key = sid != "jina"
+            missing = "no zone" if sid == "brightdata" and keys[sid] and not zone else "no API key"
+            runnable = (not needs_key or keys[sid]) and not (sid == "brightdata" and not zone)
+            fetch = self._stage(NAMES[sid], calls[sid], keys[sid], caps[sid]) if runnable else None
+            stages.append(Stage(sid, NAMES[sid], fetch, missing=missing))
+        reference = None
+        if keys["keenable"]:
+            ke = self._stage("Keenable", partial(fetchers.keenable, client, url, keys["keenable"]), keys["keenable"],
+                             fetchers.KEENABLE_DEADLINE)  # fmt: skip
+            reference = asyncio.ensure_future(_guarded(ke, min(fetchers.KEENABLE_DEADLINE, budget)))
+        try:
+            return await run_chain(url, stages, reference, budget=budget, clock=self._monotonic)
+        finally:
+            if reference is not None and not reference.done():
+                reference.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await reference
 
-        async def run() -> dict:
+    def _stage(self, provider: str, call: Callable[..., Any], key: str, cap: float) -> Fetch:
+        """Stage call for run_chain: no request on interrupt (S8) or pause (K7); the deadline is capped (A0)."""
+
+        async def run(deadline: float) -> dict:
             if is_interrupted():
                 return {"error": f"{provider}: interrupted", "code": "interrupted"}
-            return self._paused_doc(provider, key) or self._watch(provider, key, await fetch())
+            if paused := self._paused_doc(provider, key):
+                return paused
+            return self._watch(provider, key, await call(deadline=min(cap, deadline)))
 
         return run
 
@@ -184,10 +266,16 @@ class ExtractChainProvider(WebSearchProvider):
         return {"error": f"{reason} (paused for another {_left(left)})", "code": "paused"}
 
     def _watch(self, provider: str, key: str, doc: dict) -> dict:
-        """K7: start a pause when the provider's API reports a used-up quota. Returns doc."""
-        if doc.get("status") == PAUSE_STATUS and not self._paused_doc(provider, key):
-            now = self._clock()
-            seconds = _pause_seconds(provider, now)
-            self._paused[_slot(provider, key)] = (now + seconds, doc["error"])
-            log.warning("extract-chain: %s paused for %d s (%s)", provider, math.ceil(seconds), doc["code"])  # L2
+        """K7, N16: start a pause when the provider's API reports a used-up quota (quota: True). Returns doc."""
+        if doc.get("quota") and not self._paused_doc(provider, key):
+            self._paused[_slot(provider, key)] = (self._clock() + DAY, doc["error"])
+            log.warning("extract-chain: %s paused for %d s (%s)", provider, DAY, doc["code"])  # L2
         return doc
+
+
+async def _guarded(fetch: Fetch, deadline: float) -> dict:
+    """The Keenable request as a task of its own (N5): an unexpected exception fails only this request (S6)."""
+    try:
+        return await fetch(deadline)
+    except Exception as exc:
+        return {"error": f"Keenable: {type(exc).__name__}", "code": "exception"}

@@ -1,6 +1,8 @@
 # Validation
 
-Results for T1–T4 in [design.md](design.md); T5 (lint, CI) is what CI itself runs. No article texts are stored here; the raw data stays outside the repository. URL lists and per-URL results: [`data/`](../data). How the providers were chosen: [evaluation.md](evaluation.md).
+Results for T1–T4 in [design.md](design.md); T5 (lint, CI) is what CI itself runs. No page texts are stored here; the raw data stays outside the repository. URL lists and per-URL results of v0.1–v0.2: [`data/`](../data). How the providers were chosen: [evaluation.md](evaluation.md).
+
+Sections marked *history* tested the TinyFish chain of v0.1–v0.2. Their rule IDs (K1–K7, V2, V4, V8–V9, A1) are those of design.md at tag `v0.2.6`, not of the current design.
 
 Which check ran against which version. What each version changed: [CHANGELOG.md](../CHANGELOG.md).
 
@@ -11,12 +13,66 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.2.4:** unit tests, replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
 - **v0.2.5:** unit tests and stored data (section *v0.2.5: stored data*). Unlike the releases before, the classification changes results.
 - **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 are now killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
+- **v0.3.0:** unit tests; replay on the data of web benchmark v2, two sets (section *v0.3.0*); live check of 20 pages on 2026-10-19.
 
 ## T1 – Unit tests
 
 `uv run pytest`: all tests pass without network access, locally (Python 3.14) and in CI (Python 3.11 and 3.14).
 
-## T2 – Replay on the chain-test data
+## v0.3.0
+
+### T2 – Replay on the web benchmark v2 data
+
+**Data.** Web benchmark v2 (2026-10-17/18, [evaluation.md](evaluation.md#web-benchmark-v2-2026-10-1718)) fetched each page once with each provider and graded every single result against a ground truth: complete, partial, failure the chain can see, or silent failure. The replay uses two sets: set 1, the 132 pages graded for the chain's providers, and set 2, a second, harder set of 197 pages, 71 of them job pages. Firecrawl was measured on set 2 only on the 74 pages where a chain without Firecrawl does not end earlier.
+
+**Method.** `scripts/replay.py` turns each stored result into what the plugin's fetcher returns (target status from the error code or Jina's warning line, no final URL for Bright Data, Jina and Tavily), sends the results through the real `run_chain` with Keenable's stored result as the reference (K3), and grades the returned text with the grade of the provider it came from. No network, no time limit; timings are not part of the replay.
+
+**Result** (acceptance T2 for the default order: set 1 at least 116 complete, set 2 at least 168 complete, together at most 30 wrong):
+
+| Order | Set | Complete | Partial | Wrong | No result |
+|---|---|---|---|---|---|
+| default: Jina → Bright Data → Firecrawl → Keenable | 1 (132) | **116** | 8 | 8 | 0 |
+| default: Jina → Bright Data → Firecrawl → Keenable | 2 (197) | **170** | 8 | 19 | 0 |
+| previous default: Bright Data → Jina → Firecrawl → Tavily → Keenable | 1 (132) | 118 | 9 | 5 | 0 |
+| previous default: Bright Data → Jina → Firecrawl → Tavily → Keenable | 2 (197) | 160 | 7 | 30 | 0 |
+| `EXTRACT_CHAIN_ORDER=jina,brightdata,firecrawl,tavily` (Tavily on) | 1 (132) | 117 | 8 | 7 | 0 |
+
+- **T2 accepted** for the default order: 116 and 170 complete, 27 wrong together. The switch from the previous default is the decision D34: on the harder set 2, Jina first has 10 more complete and 11 fewer wrong results than Bright Data first (paired sign test, p = 0.04), on set 1 it has 2 fewer complete and 3 more wrong results. Tavily changed no result in either set.
+- **Source of the returned result** (default order): set 1: Jina 97, Bright Data 20, Firecrawl 8, Keenable 7. Set 2: Jina 161, Bright Data 26, Firecrawl 7, Keenable 3. Previous order, set 1: Bright Data 97, Jina 19, Firecrawl 8, Keenable 7, Tavily 1.
+- **Notes** (default order, set 1): the paywall note (V3) 5 times (Jina 4, Bright Data 1); the bot-check fallback (V11) once; the longest-result fallback (V15) once. No result needed the wall fallback (V5) or the page-gone copy (V14). Previous order, set 1: the paywall note 5 times, all on Bright Data results; V11 once; no V15.
+- **Against the benchmark model** (previous order; the rules computed on the same grades, 118 complete and 4 wrong): two cases differed, neither changed the number of complete results. On one page every stage failed; the plugin returns the bot-check page of the first stage with its note (fallback), which the replay counts as wrong and the model counted as no result. On another page the plugin reads the error status in Jina's header block (A7) and takes Firecrawl's result instead of Jina's; both are partial. Not repeated for the new order.
+
+### T3 – Live check
+
+On 2026-10-19, `scripts/live_check.py` sent 20 benchmark pages through Hermes' real `web_extract` path. The setup:
+
+- A throwaway Hermes Desktop profile (hermes-agent v0.21.6-133-gaa74e184) with the default order.
+- `web.extract_timeout: 180` and `web.keyless_rescue: false`.
+- Keys for Bright Data, Jina, Firecrawl and Keenable; no Tavily key.
+- 18 single calls and one call with three URLs.
+
+The pages were picked from both sets so that every path of the default order occurs at least once in the replay. This chose 6 pages where Jina passes, 4 where Bright Data answers after Jina, 3 for Firecrawl and 3 for Keenable's copy. It also chose one page each for the paywall note, the longest-result fallback and the bot-check fallback.
+
+**Result: T3 accepted.**
+
+- **Time:** All calls stayed below 180 s. The slowest took 44 s (Jina bot check, then Bright Data), the median was about 10 s.
+- **Rate:** At most 5 requests per minute per provider.
+- **No key** appeared in the output or the log lines.
+- **Paths:**
+  - **Jina:** 10 pages, one of them with the paywall note.
+  - **Bright Data:** 3 pages, after a consent wall or bot check from Jina.
+  - **Firecrawl:** 3 pages, after Bright Data failed with `brd_policy_20050`, `brd_forbidden` or a wall.
+  - **Keenable:** 3 copies with note N17. One followed 403 from Jina and Firecrawl and `brd_http_status` from Bright Data; that is no page-gone stop, because N6 counts only 404 and 410.
+  - **Bot-check fallback (V11):** on one job board every stage returned the bot check and Keenable returned 403. The bot-check page came back with its note.
+- **Against the replay:** 6 pages took another path live than in the stored data, because the sites answered differently a day later.
+  - 3 times an earlier stage now passed: Jina twice, where it had failed before, and Bright Data once.
+  - Once Jina passed the checks where the replay had fallen back to the longest result.
+  - Once Firecrawl passed a page that ended at Keenable in the replay.
+  - Once all live stages returned 403 where Bright Data had returned a paywalled text.
+  - Every note matched its result.
+- **Bright Data errors** arrive with their codes (`brd_policy_20050`, `brd_forbidden`, `brd_http_status`) and the chain moves on, as A6 requires.
+
+## T2 – Replay on the chain-test data (history)
 
 ### Data set
 
@@ -42,7 +98,7 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
   - No paywall hit of a chain provider is lost. One Exa hit is lost; Exa is not part of the chain.
   - Still wrong: `metered3` via Parallel and Tavily (registration and subscription texts). Neither provider is in the chain.
 
-## T3 – Live check (v0.1.0)
+## T3 – Live check (v0.1.0, history)
 
 ### Smoke test
 
@@ -115,7 +171,7 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
 
 [`data/live-check/results.csv`](../data/live-check/results.csv) has one row per URL: paywall status, the plugin's log line (the live run used v0.1.0, which logged Firecrawl and Keenable errors as `error`; v0.2.0 shows codes, L1), the length of the content as the model sees it, the duration and the assessment. The test profile had `web.extract_char_limit: 30000`; Hermes' default is 15,000.
 
-## T4 – Review against the design
+## T4 – Review against the design (v0.1.0, history)
 
 An independent review checked code, tests and this file against every requirement ID and found no blocker. Fixed:
 
@@ -126,7 +182,7 @@ An independent review checked code, tests and this file against every requiremen
 
 Left open on purpose: no concurrency limit for Firecrawl (K6, D16).
 
-## Edge-case review (v0.2.0, 2026-10-10)
+## Edge-case review (v0.2.0, 2026-10-10, history)
 
 The review covered failure modes and costs: Hermes' extract path, plugin loading and installation, and the providers' documented failure behaviour. Findings, fixed in v0.2.0 (D13, [CHANGELOG.md](../CHANGELOG.md)):
 
@@ -135,7 +191,7 @@ The review covered failure modes and costs: Hermes' extract path, plugin loading
 - Rules on non-news pages: the 554 TinyFish texts of an earlier search test (software documentation, forums and Q&A sites, mostly English) produce no wall or paywall classification.
 - Remaining by design: [design.md, section 13](design.md#13-known-limitations).
 
-## v0.2.5: stored data
+## v0.2.5: stored data (history)
 
 Three checks of v0.2.4 against v0.2.5 on stored data. Texts are never quoted; hosts, ids, lengths, classes and counts only.
 

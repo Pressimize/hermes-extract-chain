@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.0 – 2026-10-19
+
+A new chain of four services, Jina → Bright Data → Firecrawl → Keenable, with checks of every result against Keenable's copy. Tavily Extract is optional: it runs only if `EXTRACT_CHAIN_ORDER` names it. From web benchmark v2 (2026-10-17/18) and a second, harder set; results on their stored data in `docs/validation.md`.
+
+**Breaking changes**
+
+- TinyFish is removed, with its key, its batch requests, its final error codes and its pause until 00:05 UTC. `TINYFISH_API_KEY` is no longer read and can be deleted.
+- New keys in the profile's `.env`: `BRIGHTDATA_API_KEY` and `BRIGHTDATA_UNLOCKER_ZONE` (name of a Web Unlocker zone); optionally `JINA_API_KEY` and, only for the optional Tavily stage, `TAVILY_API_KEY`. `FIRECRAWL_API_KEY` and `KEENABLE_API_KEY` stay.
+- `web.extract_timeout` must be 180 (was: at least 110). The chain now takes up to 170 s per URL; a lower setting shrinks that budget, and below 120 s the plugin logs a warning.
+- Egress: allow `r.jina.ai` and `api.brightdata.com` (and `api.tavily.com` if you enable Tavily); `api.fetch.tinyfish.ai` is no longer used.
+- The notes changed: `Live fetch via <Provider> (…)` and `Copy via <Provider>; it may be older than the live page (…)` replace the Firecrawl and Keenable source notes, the three short-page notes are gone, and two notes are new (longest result, page gone). The log line lists the new stages, and Keenable always.
+
+**Chain**
+
+- Keenable's copy is requested for every URL at the start, in parallel, and serves as the reference for the checks and as the last stage.
+- A result that looks fine is checked: very short, print view, short with a JavaScript or bot-check hint, short with repeated consent text, or much shorter than Keenable's copy. A suspect result is kept and the next stage is asked; before, a short live page ended the chain (D23, superseded).
+- When no stage passes, the longest kept result is returned with a note.
+- No error ends the chain any more, except two 404/410 answers of live stages before Firecrawl was asked; Keenable's copy is then returned with a note, if it has one.
+- `EXTRACT_CHAIN_ORDER` sets the order of the stages; Keenable always stays last. The default is `jina,brightdata,firecrawl,keenable`. Tavily is not part of it; to use it, name it, e.g. `jina,brightdata,firecrawl,tavily` (D34). Jina first gave more complete results than Bright Data first on the second, harder benchmark set (170 against 160 of 197 pages); Tavily changed no result in either set.
+- A time budget per URL from `web.extract_timeout`; a stage with less than 10 s left is skipped (`no_time`).
+- Pauses only on quota codes of a provider's API, now also Bright Data's account and zone codes and Tavily's 432/433; a target page with status 402 never pauses a stage.
+- The paywall check skips the last quarter of every full page (Bright Data, Jina, Firecrawl, Tavily), not only of Firecrawl's.
+
+**Docs:** design rewritten for 0.3.0 (rules K1–K9, C1–C5, V12–V15, A1, A6–A8, decisions D26–D34; D2, D10, D23, D24 superseded); README with configuration, costs per provider and privacy; troubleshooting with the new log codes; validation and evaluation keep the v0.1–v0.2 tests as history.
+
 ## 0.2.6 – 2026-10-17
 
 Fixes from the overnight review (`docs/reviews/2026-10-16.md`) and from a mutation run, and alignment with hermes-search-chain. No change to the interface, the notes or the order of providers.
