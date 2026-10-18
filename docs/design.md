@@ -6,17 +6,18 @@ Requirements carry IDs (`S`, `K`, `C`, `E`, `V`, `A`, `Z`, `I`, `L`, `T`, decisi
 
 Hermes Agent uses exactly one provider for `web_extract` (`web.extract_backend`). When that provider fails for a URL, Hermes does not try a second configured provider. The only built-in fallback is the *keyless rescue*: it runs only when **every** URL of a call fails, and then tries anonymous free tiers (Exa first), without telling the model.
 
-This plugin registers its own extract provider that chains five services per URL (default order, K1):
+This plugin registers its own extract provider that chains four services per URL (default order, K1), and a fifth on request:
 
-1. **Bright Data Web Unlocker**: live, gets past most bot protection; 5,000 requests/month free.
-2. **Jina Reader**: live, works without a key (rate-limited) or with a key.
+1. **Jina Reader**: live, works without a key (rate-limited, 20 requests per minute) or with a key.
+2. **Bright Data Web Unlocker**: live, gets past most bot protection; 5,000 requests/month free.
 3. **Firecrawl**: live, with a browser and proxies; 1 credit per page.
-4. **Tavily Extract**: a copy from Tavily's service; reports its failures well.
-5. **Keenable**: a copy from Keenable's index; gets past cookie/consent walls; 100,000 requests/month free. It is asked for every URL at the start, in parallel, and its copy is also the reference that the other results are checked against (K3, C5).
+4. **Keenable**: a copy from Keenable's index; gets past cookie/consent walls; 100,000 requests/month free. It is asked for every URL at the start, in parallel, and its copy is also the reference that the other results are checked against (K3, C5).
+
+**Tavily Extract** (a copy from Tavily's service; reports its failures well) is not in the default order. It runs, before Keenable, only if `EXTRACT_CHAIN_ORDER` names it (K1, D34).
 
 The aim is as many complete results as possible; saving credits comes second. Escalating once too often costs requests, escalating once too rarely costs a result (D29).
 
-**Why these five, in this order:** web benchmark v2 on 2026-10-17/18 ([evaluation.md](evaluation.md#web-benchmark-v2-2026-10-1718)) and the decisions D26–D33. The choice of the v0.1–v0.2 chain (TinyFish → Firecrawl → Keenable) is in the same file.
+**Why these four, in this order:** web benchmark v2 on 2026-10-17/18 ([evaluation.md](evaluation.md#web-benchmark-v2-2026-10-1718)), a second, harder benchmark set, and the decisions D26–D34. The choice of the v0.1–v0.2 chain (TinyFish → Firecrawl → Keenable) is in the same file.
 
 ## 2. Non-goals
 
@@ -34,10 +35,10 @@ The aim is as many complete results as possible; saving credits comes second. Es
 ## 4. Interface to Hermes
 
 - **S1** The plugin directory contains `plugin.yaml` and `__init__.py` (N4).
-  - `plugin.yaml` declares `name: extract-chain`, `kind: backend`, `requires_hermes: ">=0.21"`, `provides_web_providers: [extract-chain]`, `requires_env` with `BRIGHTDATA_API_KEY`, `BRIGHTDATA_UNLOCKER_ZONE`, `FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, `KEENABLE_API_KEY`, and `optional_env` with `JINA_API_KEY` and `EXTRACT_CHAIN_ORDER`. The keys are `secret: true`, the zone and the order are not.
+  - `plugin.yaml` declares `name: extract-chain`, `kind: backend`, `requires_hermes: ">=0.21"`, `provides_web_providers: [extract-chain]`, `requires_env` with `BRIGHTDATA_API_KEY`, `BRIGHTDATA_UNLOCKER_ZONE`, `FIRECRAWL_API_KEY`, `KEENABLE_API_KEY`, and `optional_env` with `TAVILY_API_KEY` (used only if the order names Tavily), `JINA_API_KEY` and `EXTRACT_CHAIN_ORDER`. The keys are `secret: true`, the zone and the order are not.
   - In Hermes 0.21.6, `requires_env` is asked for at installation and reported by the configuration check; it does not disable the plugin. Each stage checks its own key (K2).
   - `register(ctx)` calls `ctx.register_web_search_provider(...)` once.
-- **S2** The provider subclasses `agent.web_search_provider.WebSearchProvider`. Its `name` is `extract-chain`; `supports_search()` returns False and `supports_extract()` True. `is_available()` is true iff at least one keyed stage can run: Bright Data (key and zone), Firecrawl, Tavily or Keenable. Jina alone does not count. It checks without network access (N3).
+- **S2** The provider subclasses `agent.web_search_provider.WebSearchProvider`. Its `name` is `extract-chain`; `supports_search()` returns False and `supports_extract()` True. `is_available()` is true iff at least one keyed stage of the order (N2) can run: Bright Data (key and zone), Firecrawl, Tavily or Keenable; a stage the order leaves out does not count. Jina alone does not count. It checks without network access (N3).
 - **S3** Keys, the zone and the order are read only via `agent.web_search_provider.get_provider_env(...)`, so per-profile `.env` files work.
   - If reading a value raises (e.g. `UnscopedSecretError`), it counts as missing.
   - Keys of 8 or more characters never appear in logs, error texts or notes (A4); a shorter value is not taken for a key.
@@ -56,13 +57,13 @@ The aim is as many complete results as possible; saving credits comes second. Es
 
 ## 5. Chain (per URL)
 
-- **K1** Stages and order (N1, N2). Default order `brightdata,jina,firecrawl,tavily,keenable`. The variable `EXTRACT_CHAIN_ORDER` (comma-separated) overrides it:
+- **K1** Stages and order (N1, N2). Default order `jina,brightdata,firecrawl,keenable` (D34); Tavily is not part of it. The variable `EXTRACT_CHAIN_ORDER` (comma-separated) overrides it:
   - Names are trimmed and lowercased; valid are exactly `brightdata`, `jina`, `firecrawl`, `tavily`, `keenable`. Unknown names and repeats are dropped.
-  - Keenable always goes last, wherever it stands and also when it is missing, because it is the reference (K3). A stage left out of the list is not asked.
+  - Keenable always goes last, wherever it stands and also when it is missing, because it is the reference (K3). A stage left out of the list is not asked; this is how Tavily is switched on (`jina,brightdata,firecrawl,tavily`) and how it stays off by default.
   - If no stage but Keenable remains, the default applies. A list with unknown or repeated names is logged once per process as a WARNING naming the order used.
 - **K2** Missing keys (N3). A stage without its key is skipped with `<Provider>: no API key` (code `no_key`). Bright Data also needs `BRIGHTDATA_UNLOCKER_ZONE`; without it the stage is skipped with `Bright Data: no zone` (code `no_key`). Jina runs without a key, with a lower rate limit. Hermes offers `web_extract` at all only while some web backend reports itself available (S2); if it does, it calls `extract` even then, because it does not check `is_available()` for an explicitly configured extract backend.
 - **K3** Keenable as reference (N5). Keenable's request starts for every URL at the beginning, in parallel to the first stage, as a task of its own (S6). Its result is the reference for C5 and the last stage (K4); Keenable is asked at most once per URL (K5). The first stage whose result is `ok` or `thin` waits for it, at most until its deadline (A0) and at most for the time left (Z1); if it is not ready then, failed, or is no copy (a class other than `ok` or `thin`, e.g. a consent page), C5 is off for every stage of this URL. Later stages never wait. When the URL ends before Keenable's turn (a result was taken, an interrupt, an exception), the task is cancelled if still running before the client closes (A5).
-- **K4** Per stage, in order, the result is classified (section 6). Bright Data, Jina, Firecrawl and Tavily are full pages (E4); Keenable is not (N6):
+- **K4** Per stage, in order, the result is classified (section 6). Jina, Bright Data, Firecrawl and Tavily (if in the order) are full pages (E4); Keenable is not (N6):
   - `error`, `empty`, `challenge`, `wall`: next stage. The first consent-wall page and the first bot-check page are kept for the fallback (K8).
   - `paywall`: done, with the source note (V12, V13) if an earlier stage was passed over, and the paywall note (V3) (D4).
   - `ok` or `thin`: the checks C1–C5 run. No check applies: done, with the source note if an earlier stage was passed over. A check applies: the result is kept with the check that applied, and the next stage is asked (D29).
@@ -91,7 +92,7 @@ The aim is as many complete results as possible; saving credits comes second. Es
   2. otherwise the longest result kept for C3, with V11;
   3. otherwise the consent-wall page, with V5;
   4. otherwise the bot-check page, with V11;
-  5. otherwise an `error` listing the reasons of all stages, e.g. `Bright Data: target HTTP 403; Jina: API 429: …; Firecrawl: target HTTP 403; Tavily: failed; Keenable: Gateway timeout`.
+  5. otherwise an `error` listing the reasons of all stages, e.g. `Jina: API 429: …; Bright Data: target HTTP 403; Firecrawl: target HTTP 403; Keenable: Gateway timeout`.
 - **K9** Page gone (N6, D32). When two live stages (Bright Data, Jina, Firecrawl; in any order, not necessarily in a row) report a target status of 404 or 410 **and Firecrawl has not been asked yet**, no further live stage is asked. Keenable's copy, requested at the start, is awaited: if it is `ok`, `thin` or `paywall`, it is returned with V14 (and V3 for a paywall); a consent page, a bot check, an empty page or an error is no copy, and the result is an `error` listing the reasons of all stages asked. Once Firecrawl has been asked (a request went out, not skipped for a key, a pause, an interrupt or lack of time), the chain runs to its end. Tavily reports no target status.
 
 ## 6. Classification
@@ -112,7 +113,7 @@ Rules:
   - A real consent wall replaces the content: it stands at the beginning, or the page is short (derStandard: 992 characters, wall text at the end).
   - The prototype also checked the last 2,000 characters. On whole pages that caused false alarms from consent texts in the footer (Welt, n-tv).
 - **E4** `paywall`: one definite paywall marker, or at least 2 different general paywall markers, occur in the check area.
-  - **Check area:** for full pages (Bright Data, Jina, Firecrawl, Tavily; K4) the whole text below 4,000 characters, otherwise the first 75 %. For Keenable, which returns the main content, the whole text.
+  - **Check area:** for full pages (Jina, Bright Data, Firecrawl, Tavily; K4) the whole text below 4,000 characters, otherwise the first 75 %. For Keenable, which returns the main content, the whole text.
   - **Why:** whole pages end with footer and subscription dialogs. On stern.de, "Artikel freischalten", "PUR-Abo abschließen" and "STERN PLUS-Inhalte" sit at 81–95 % of the page; Spiegel and Welt are similar. Firecrawl is asked for the main content only (`onlyMainContent: true`, A2), yet its Markdown still carries navigation, teasers of other articles, the footer and subscription boxes.
   - Real paywall notices sit right after the teaser (Firecrawl in the chain test: at 13–45 % of the page). For main-content providers the notice is at the very end (Exa on heise+: 96 %), so the cut does not apply to them (D12).
 - **E8** `thin`: not error, empty, challenge, wall or paywall, and the visible text is shorter than `THIN_BELOW` = 500 characters. A short text is no error; it is a reason to ask the next stage (C1, D20).
@@ -144,7 +145,7 @@ No title comparison: it made no difference in the benchmark.
   - No note for differences in scheme, trailing slash, query, fragment or letter case, for the same path, or when `final_url` is missing or not a string. V10 is a note only; it never changes the class or the stage order (D22). Only Firecrawl and Keenable report a final URL.
 - **V11** Bot-check page without alternative: `[extract-chain] This looks like a bot-check page; no other source had the page (<reasons>). The text below is what the site returned.` The reasons of all stages, joined with `; ` as in V5. The result is no error.
 - **V12** Source, live stage (Bright Data, Jina, Firecrawl), when an earlier stage was passed over (N17): `[extract-chain] Live fetch via <Provider> (<reasons>).`
-- **V13** Source, copy (Tavily, Keenable), when an earlier stage was passed over (N17): `[extract-chain] Copy via <Provider>; it may be older than the live page (<reasons>).`
+- **V13** Source, copy (Keenable; Tavily if in the order), when an earlier stage was passed over (N17): `[extract-chain] Copy via <Provider>; it may be older than the live page (<reasons>).`
 - **V14** Page gone (K9, N17a): `[extract-chain] The live page returned HTTP <status>; this is an older copy from Keenable's index.`
 - **V15** Longest result (K8, N18): `[extract-chain] No source passed the checks; this is the longest result (<Provider>, <n> characters; <reasons>).` n is the visible length of the returned text.
 - `<reasons>` lists the stages passed over, joined with `; `: their error text (A4), their class (`Jina: consent wall`, `Bright Data: bot check page`, `Firecrawl: empty page`) or the check that applied (`Bright Data: shorter than the reference copy`, `Jina: very short page (312 characters)`, `Firecrawl: print view`, `Tavily: JavaScript or bot-check hint`, `Bright Data: consent text`).
@@ -193,17 +194,17 @@ No title comparison: it made no difference in the benchmark.
   - with `hermes plugins install <owner>/hermes-extract-chain#extract_chain --enable` (sparse clone of the subdirectory), or
   - by copying it to `$HERMES_HOME/plugins/extract-chain/` and adding `extract-chain` to `plugins.enabled`.
 
-  The keys, the zone and the optional order go into the profile's `.env`.
+  The keys, the zone and the optional order go into the profile's `.env`; `TAVILY_API_KEY` is needed only if the order names Tavily.
 - **I2** Configuration:
   - `web.extract_backend: extract-chain`.
   - `web.keyless_rescue: false`. Otherwise, when all URLs of a call fail, Hermes silently replaces the results with anonymous free tiers, without notes.
   - `web.extract_timeout: 180`. Hermes discards every result of a call that exceeds it; 180 s leave 10 s above the budget of 170 s (Z1).
 - **I3** The plugin directory contains no `pyproject.toml` and no dependencies. It is therefore not a member of Hermes' package manager and needs no environment changes. The manual copy (I1) avoids running the package manager at all, which matters in containers built from the official image.
-- **I4** Egress: the host must reach `api.brightdata.com`, `r.jina.ai`, `api.firecrawl.dev`, `api.tavily.com` and `api.keenable.ai` (HTTPS), directly or through the configured proxy.
+- **I4** Egress: the host must reach `r.jina.ai`, `api.brightdata.com`, `api.firecrawl.dev` and `api.keenable.ai` (HTTPS), directly or through the configured proxy. `api.tavily.com` is needed only if the order names Tavily.
 
 ## 11. Logging
 
-- **L1** Logger `logging.getLogger(__name__)`. For each URL that reaches the chain, one INFO line (N20): `extract-chain <host>: <stage>=<outcome> … keenable=<outcome>`, e.g. `extract-chain www.example.com: brightdata=suspect_shorter jina=ok keenable=ref_ok`.
+- **L1** Logger `logging.getLogger(__name__)`. For each URL that reaches the chain, one INFO line (N20): `extract-chain <host>: <stage>=<outcome> … keenable=<outcome>`, e.g. `extract-chain www.example.com: jina=suspect_shorter brightdata=ok keenable=ref_ok`.
   - Every stage that was asked or skipped is listed in order; Keenable is always listed, last.
   - The outcome is the class from section 6 (`ok`, `paywall`, `wall`, `empty`, `challenge`; a `thin` result always shows as `suspect_thin`, because C1 applies to it), a check (`suspect_thin`, `suspect_print`, `suspect_check`, `suspect_consent`, `suspect_shorter`), or for errors a short code:
     - `api_<status>` (API of Bright Data, Jina, Firecrawl, Tavily), `http_<status>` (Keenable);
@@ -222,7 +223,7 @@ No title comparison: it made no difference in the benchmark.
 ## 12. Tests and acceptance
 
 - **T1** Unit tests (pytest, `httpx.MockTransport`, no network). Every rule S, K, C, E, V, A and Z has at least one test, boundaries included (500, 1,500, 3,000 and 5,000 characters, factor 1.5 just below and above, 10 s left).
-- **T2** Replay on the stored single-provider results of web benchmark v2 (data not published): `scripts/replay.py` sends them through the real chain. Acceptance on the 132 pages with the default order: at least 116 complete, at most 6 wrong; fallbacks (K8) and paywall notes per stage listed separately. Results: [validation.md](validation.md).
+- **T2** Replay on the stored single-provider results of web benchmark v2 (data not published): `scripts/replay.py` sends them through the real chain. Two page sets: set 1 (132 pages) and the harder set 2 (197 pages, 71 of them job pages). Acceptance with the default order: set 1 at least 116 complete, set 2 at least 168 complete, together at most 30 wrong; fallbacks (K8) and paywall notes per stage listed separately. Results: [validation.md](validation.md).
 - **T3** Live check through Hermes' real `web_extract` path, without an LLM, in a throwaway profile with `web.extract_timeout: 180`: 20 pages from the benchmark, every call under 180 s, notes plausible, no keys in the log. Results: [validation.md](validation.md).
 - **T4** A review checks the result against this document.
 - **T5** `ruff check` and `ruff format --check` are clean; CI (GitHub Actions: ruff, pytest on Python 3.11 and 3.14) is green.
@@ -233,14 +234,14 @@ See also [troubleshooting.md](troubleshooting.md), section *Edge cases*.
 
 - Paywalls are not bypassed; teasers without markers stay undetected.
 - The checks (E7, E8, C1–C5) are heuristics. A bot check in other words passes; a real short page goes on to the next stages and comes back only if nothing better is found (K8). The reference check C5 also fires on complete results when Keenable's copy carries more around the article, which costs a request, not a result. Partial results of the first stage that pass every check end the chain.
-- Bright Data, Jina and Tavily report no final URL. For their results, redirects are not noted (V10), and the website blocklist sees only the input URL (S7).
+- Jina, Bright Data and Tavily (if enabled) report no final URL. For their results, redirects are not noted (V10), and the website blocklist sees only the input URL (S7).
 - Without KYC, Bright Data refuses government sites and paths blocked by robots.txt (D33); the other stages fetch them.
 - Keenable sees every URL: it is asked for each one at the start (K3).
-- Copies (Tavily, Keenable) may be older than the live page. The note says so; the age itself is unknown. A copy longer than a live page wins in the fallback (K8, D30). Jina caches pages for up to an hour (A7), Firecrawl accepts copies of up to an hour (D7).
+- Copies (Keenable, and Tavily if enabled) may be older than the live page. The note says so; the age itself is unknown. A copy longer than a live page wins in the fallback (K8, D30). Jina caches pages for up to an hour (A7), Firecrawl accepts copies of up to an hour (D7).
 - Marker rules are keyword rules tuned on German news sites. An article *about* paywalls or cookie consent can trigger a note, and English-language paywalls are mostly not detected.
 - A pause (K7) does not notice a top-up. After adding credits, the stage is used again when the pause ends or Hermes is restarted. The pauses rest on the providers' documentation; no real quota reply was available for a test. What Bright Data answers when its free monthly allowance is used up without a payment method is not documented; if it is no code of K7, every URL costs one failing Bright Data request until the month renews.
 - Hermes caches successful results with their notes for `web.cache_ttl_minutes` (default 20), including a consent page returned with V5.
-- Privacy: every URL is sent to Keenable and to the first stage of the order, and, depending on the outcome, to the later stages. Hermes refuses URLs that contain secrets before any provider sees them.
+- Privacy: every URL is sent to Keenable and to the first stage of the order (Jina by default), and, depending on the outcome, to the later stages (Tavily only if the order names it). Hermes refuses URLs that contain secrets before any provider sees them.
 - The plugin imports two modules from inside Hermes, `agent.web_search_provider` and `tools.website_policy`, and reads `web.extract_timeout` via `tools.web_tools`. If a Hermes update moves the first, the plugin does not load; without the second it refuses every URL (S7); without the third the budget falls back to 110 s (Z1).
 
 ## 14. Decisions
@@ -273,10 +274,11 @@ See also [troubleshooting.md](troubleshooting.md), section *Edge cases*.
 | D24 | No switch for the provider order in v0.2.5. **Superseded in 0.3.0** (D27) | Asked for job listings, where TinyFish returns no links; decided to wait and see what E7 and E8 already fix. |
 | D25 | A bot-check page without alternative is returned with a note, like a consent wall (V5), not as an error | The marker list can match a real short page. |
 | D26 | TinyFish removed (0.3.0) | In web benchmark v2 (132 pages) no chain gained from TinyFish at any position; as first stage it ended the chain on failures it did not report. It fails on most pages with bot protection, and returning only the main content makes it look short against any reference. |
-| D27 | Stage order configurable via `EXTRACT_CHAIN_ORDER`; Keenable always last (K1) | Bright Data first and Jina first were close in the benchmark model (118 and 117 complete), Jina first being faster; a further measurement decides, and a setting avoids a release for it. Keenable reports its failures worst of all providers and is the reference (K3), so nothing comes after it. |
+| D27 | Stage order configurable via `EXTRACT_CHAIN_ORDER`; Keenable always last (K1) | Bright Data first and Jina first were close in the benchmark model (118 and 117 complete), Jina first being faster; a further measurement decides, and a setting avoids a release for it. The further measurement came in D34: Jina first is the default. Keenable reports its failures worst of all providers and is the reference (K3), so nothing comes after it. |
 | D28 | Keenable asked for every URL at the start, in parallel, as reference (K3) | The length comparison (C5) carries most of the gain of the checks; the text patterns alone added little on the benchmark pages. Running in parallel costs no time; it costs one Keenable request per URL from a large free allowance. |
 | D29 | A result that fails a check (C1–C5) moves the chain on instead of ending it (K4) | The goal is the most complete results; a false alarm costs requests, not a result. Measured false alarms on complete results: Bright Data 6 %, Jina 1 %, Firecrawl 8 %, Tavily 1 %. A short live page now yields to a longer later result, Keenable's copy included (supersedes D23); the source note says the copy may be older. |
 | D30 | When no stage passes, the longest kept result, the earlier on a tie; results with a bot-check hint last (K8) | Asking every stage and picking the longest result measured worse than stopping at the first result that passes the checks; the order is the better filter, the length only the fallback. A bot-check hint is a stronger sign of a wrong page than shortness. |
 | D31 | Time budget from `web.extract_timeout` (at most 170 s per URL), stage deadlines Bright Data 90 s, Jina 35 s, Firecrawl 40 s, Tavily 30 s, Keenable 25 s (Z1, A0) | The slow pages are the hard ones that only Bright Data fetched; a shorter Bright Data limit cost complete results, and every Bright Data fetch over 90 s failed. The other limits sit at or above the slowest fetch measured for each provider. A single total budget instead of a sum of deadlines keeps the call under Hermes' limit; I2 raises that limit to 180 s. |
 | D32 | Two 404/410 answers of live stages end the live stages only before Firecrawl was asked (K9) | A page that two services report gone is rarely fetched by a third; skipping the rest saves quota. Once Firecrawl has been asked, the remaining stages cost little compared to the chance of an older copy that still holds the content. Keenable's copy, already requested, is returned with a note. |
 | D33 | Pauses only on quota codes of a provider's API, set by the fetcher (K7); no Bright Data KYC | Bright Data reports account and zone errors with an outer 200; target pages answered 402 several times in the benchmark and must not pause a stage. KYC requires a company; government sites and robots.txt-blocked paths are left to the other stages. |
+| D34 | Default order Jina → Bright Data → Firecrawl → Keenable; Tavily optional, only via `EXTRACT_CHAIN_ORDER` (K1) | A second, harder benchmark set (197 pages, 71 of them job pages) replayed with the real chain: Jina first 170 complete and 19 wrong, Bright Data first 160 and 30 (paired sign test, p = 0.04); on the first set (132 pages) 116 / 8 against 118 / 5. Bright Data stays second: several agents share Jina's keyless limit of 20 requests per minute, a 429 then moves on to Bright Data, and a second live stage ahead of Firecrawl spares Firecrawl credits. Tavily changed no result in either set and reported only 38 % of its failures recognisably in the second set, so it is optional. Settles the default order that D27 left open; Tavily's fetcher (A8) stays. |

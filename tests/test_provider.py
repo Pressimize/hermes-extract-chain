@@ -132,7 +132,7 @@ def test_version_is_the_same_in_both_files():  # N21, P1
 
 
 def test_display_name_names_the_chain():  # N1
-    assert ExtractChainProvider().display_name == "Extract chain (Bright Data, Jina, Firecrawl, Tavily, Keenable)"
+    assert ExtractChainProvider().display_name == "Extract chain (Jina, Bright Data, Firecrawl, Keenable)"
 
 
 # --- S2, N3: availability ----------------------------------------------------------------------------------
@@ -151,7 +151,9 @@ def test_capabilities(env):  # S2
         ({"BRIGHTDATA_UNLOCKER_ZONE": "z"}, False),
         ({"JINA_API_KEY": "jn-SECRET"}, False),  # N3: Jina alone does not count
         ({"FIRECRAWL_API_KEY": "fc-SECRET"}, True),
-        ({"TAVILY_API_KEY": "tv-SECRET"}, True),
+        ({"TAVILY_API_KEY": "tv-SECRET"}, False),  # N2: Tavily is not in the default order
+        ({"TAVILY_API_KEY": "tv-SECRET", "EXTRACT_CHAIN_ORDER": "jina,tavily"}, True),
+        ({"FIRECRAWL_API_KEY": "fc-SECRET", "EXTRACT_CHAIN_ORDER": "jina,tavily"}, False),  # left out of the order
         ({"KEENABLE_API_KEY": "ke-SECRET"}, True),
         ({}, False),
     ],

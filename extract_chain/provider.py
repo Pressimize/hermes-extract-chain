@@ -158,12 +158,13 @@ class ExtractChainProvider(WebSearchProvider):
 
     @property
     def display_name(self) -> str:
-        return "Extract chain (Bright Data, Jina, Firecrawl, Tavily, Keenable)"
+        return "Extract chain (Jina, Bright Data, Firecrawl, Keenable)"
 
     def is_available(self) -> bool:
-        """N3: at least one keyed stage can run (Jina alone does not count)."""
-        bright = bool(_env(KEYS["brightdata"]) and _env(ZONE_ENV))
-        return bright or any(_env(KEYS[s]) for s in ("firecrawl", "tavily", "keenable"))
+        """N3: at least one keyed stage of the order can run (Jina alone does not count; Keenable always runs)."""
+        order = stage_order(_env(ORDER_ENV))
+        bright = "brightdata" in order and bool(_env(KEYS["brightdata"]) and _env(ZONE_ENV))
+        return bright or any(s in order and _env(KEYS[s]) for s in ("firecrawl", "tavily", "keenable"))
 
     def supports_search(self) -> bool:
         return False

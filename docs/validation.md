@@ -13,7 +13,7 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.2.4:** unit tests, replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
 - **v0.2.5:** unit tests and stored data (section *v0.2.5: stored data*). Unlike the releases before, the classification changes results.
 - **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 are now killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
-- **v0.3.0:** unit tests; replay on the data of web benchmark v2 (section *v0.3.0*); live check pending.
+- **v0.3.0:** unit tests; replay on the data of web benchmark v2, two sets (section *v0.3.0*); live check pending.
 
 ## T1 – Unit tests
 
@@ -23,21 +23,24 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 
 ### T2 – Replay on the web benchmark v2 data
 
-**Data.** Web benchmark v2 (2026-10-17/18, [evaluation.md](evaluation.md#web-benchmark-v2-2026-10-1718)) fetched each page once with each provider and graded every single result against a ground truth: complete, partial, failure the chain can see, or silent failure. The replay uses the 132 pages graded for the chain's providers.
+**Data.** Web benchmark v2 (2026-10-17/18, [evaluation.md](evaluation.md#web-benchmark-v2-2026-10-1718)) fetched each page once with each provider and graded every single result against a ground truth: complete, partial, failure the chain can see, or silent failure. The replay uses two sets: set 1, the 132 pages graded for the chain's providers, and set 2, a second, harder set of 197 pages, 71 of them job pages. Firecrawl was measured on set 2 only on the 74 pages where a chain without Firecrawl does not end earlier.
 
 **Method.** `scripts/replay.py` turns each stored result into what the plugin's fetcher returns (target status from the error code or Jina's warning line, no final URL for Bright Data, Jina and Tavily), sends the results through the real `run_chain` with Keenable's stored result as the reference (K3), and grades the returned text with the grade of the provider it came from. No network, no time limit; timings are not part of the replay.
 
-**Result** (acceptance T2: at least 116 complete, at most 6 wrong):
+**Result** (acceptance T2 for the default order: set 1 at least 116 complete, set 2 at least 168 complete, together at most 30 wrong):
 
-| Order | Complete | Partial | Wrong | No result |
-|---|---|---|---|---|
-| default: Bright Data → Jina → Firecrawl → Tavily → Keenable | **118** | 9 | 5 | 0 |
-| `EXTRACT_CHAIN_ORDER=jina,brightdata,firecrawl,tavily` | 117 | 8 | 7 | 0 |
+| Order | Set | Complete | Partial | Wrong | No result |
+|---|---|---|---|---|---|
+| default: Jina → Bright Data → Firecrawl → Keenable | 1 (132) | **116** | 8 | 8 | 0 |
+| default: Jina → Bright Data → Firecrawl → Keenable | 2 (197) | **170** | 8 | 19 | 0 |
+| previous default: Bright Data → Jina → Firecrawl → Tavily → Keenable | 1 (132) | 118 | 9 | 5 | 0 |
+| previous default: Bright Data → Jina → Firecrawl → Tavily → Keenable | 2 (197) | 160 | 7 | 30 | 0 |
+| `EXTRACT_CHAIN_ORDER=jina,brightdata,firecrawl,tavily` (Tavily on) | 1 (132) | 117 | 8 | 7 | 0 |
 
-- **T2 accepted** for the default order.
-- **Source of the returned result** (default order): Bright Data 97, Jina 19, Firecrawl 8, Keenable 7, Tavily 1.
-- **Notes** (default order): the paywall note (V3) 5 times, all on Bright Data results; the bot-check fallback (V11) once. No result needed the longest-result fallback (V15), the wall fallback (V5) or the page-gone copy (V14).
-- **Against the benchmark model** (the rules computed on the same grades, 118 complete and 4 wrong): two cases differ, neither changes the number of complete results. On one page every stage failed; the plugin returns the bot-check page of the first stage with its note (fallback), which the replay counts as wrong and the model counted as no result. On another page the plugin reads the error status in Jina's header block (A7) and takes Firecrawl's result instead of Jina's; both are partial.
+- **T2 accepted** for the default order: 116 and 170 complete, 27 wrong together. The switch from the previous default is the decision D34: on the harder set 2, Jina first has 10 more complete and 11 fewer wrong results than Bright Data first (paired sign test, p = 0.04), on set 1 it has 2 fewer complete and 3 more wrong results. Tavily changed no result in either set.
+- **Source of the returned result** (default order): set 1: Jina 97, Bright Data 20, Firecrawl 8, Keenable 7. Set 2: Jina 161, Bright Data 26, Firecrawl 7, Keenable 3. Previous order, set 1: Bright Data 97, Jina 19, Firecrawl 8, Keenable 7, Tavily 1.
+- **Notes** (default order, set 1): the paywall note (V3) 5 times (Jina 4, Bright Data 1); the bot-check fallback (V11) once; the longest-result fallback (V15) once. No result needed the wall fallback (V5) or the page-gone copy (V14). Previous order, set 1: the paywall note 5 times, all on Bright Data results; V11 once; no V15.
+- **Against the benchmark model** (previous order; the rules computed on the same grades, 118 complete and 4 wrong): two cases differed, neither changed the number of complete results. On one page every stage failed; the plugin returns the bot-check page of the first stage with its note (fallback), which the replay counts as wrong and the model counted as no result. On another page the plugin reads the error status in Jina's header block (A7) and takes Firecrawl's result instead of Jina's; both are partial. Not repeated for the new order.
 
 ### T3 – Live check
 

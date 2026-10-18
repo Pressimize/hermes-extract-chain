@@ -6,15 +6,15 @@ How failures show up, what the log line means, typical problems with their fixes
 
 | Place | What you find |
 |---|---|
-| The tool result the model sees | Per URL either content (possibly with `[extract-chain]` notes at the top) or an `error` listing the reason of every stage, e.g. `Bright Data: target HTTP 403; Jina: target HTTP 403; Firecrawl: target HTTP 403; Tavily: failed; Keenable: Gateway timeout` |
-| `logs/agent.log` in the Hermes home (INFO) | One line per URL: `extract-chain <host>: brightdata=… jina=… firecrawl=… tavily=… keenable=…` (L1) |
+| The tool result the model sees | Per URL either content (possibly with `[extract-chain]` notes at the top) or an `error` listing the reason of every stage, e.g. `Jina: target HTTP 403; Bright Data: target HTTP 403; Firecrawl: target HTTP 403; Keenable: Gateway timeout` |
+| `logs/agent.log` in the Hermes home (INFO) | One line per URL: `extract-chain <host>: jina=… brightdata=… firecrawl=… keenable=…` (L1; `tavily=…` appears only if Tavily is in the order) |
 | `logs/errors.log` (WARNING) | Plugin load failures, the website-policy import warning, the plugin's `chain failed` warning, the start of a pause (`… paused for <seconds> s`), an invalid `EXTRACT_CHAIN_ORDER`, a `web.extract_timeout` below 120 s, Hermes' extract timeouts |
 | `hermes plugins list` | Whether `extract-chain` is enabled and loaded, or why it failed to load |
 
 Count how often each stage was needed and how it ended, e.g. to watch credits:
 
 ```bash
-grep -oE "(brightdata|jina|firecrawl|tavily|keenable)=[a-z_0-9]*" logs/agent.log | sort | uniq -c
+grep -oE "(jina|brightdata|firecrawl|tavily|keenable)=[a-z_0-9]*" logs/agent.log | sort | uniq -c
 ```
 
 ## How failures surface
@@ -51,19 +51,19 @@ Each stage appears as `<stage>=<outcome>`, in order, Keenable last. The outcomes
 
 | Code | Stage | Meaning | Chain continues? |
 |---|---|---|---|
-| `api_401` | Bright Data, Jina, Firecrawl, Tavily | Key wrong or disabled | yes |
+| `api_401` | Jina, Bright Data, Firecrawl, Tavily | Key wrong or disabled | yes |
 | `api_400` | Bright Data | Zone unknown, or the URL was refused as invalid | yes |
-| `api_402` | Bright Data, Jina, Firecrawl, Tavily | Quota or credits used up; the stage pauses for 24 h (K7) | yes |
-| `api_432`, `api_433` | Tavily | Plan limit or pay-as-you-go limit reached; pause (K7) | yes |
+| `api_402` | Jina, Bright Data, Firecrawl, Tavily | Quota or credits used up; the stage pauses for 24 h (K7) | yes |
+| `api_432`, `api_433` | Tavily (only if enabled) | Plan limit or pay-as-you-go limit reached; pause (K7) | yes |
 | `api_429` | Jina, Firecrawl, Tavily | Rate limit; no pause. Jina without a key allows 20 requests per minute | yes |
 | `api_422` | Jina | Seen in tests; meaning not documented | yes |
 | `api_200` | Firecrawl | Firecrawl answered 200 without `success: true` | yes |
-| `api_5xx` | Bright Data, Jina, Firecrawl, Tavily | Provider outage | yes |
+| `api_5xx` | Jina, Bright Data, Firecrawl, Tavily | Provider outage | yes |
 | `brd_<code>` | Bright Data | Unlocker error with Bright Data's code (A1), e.g. `brd_proxy_error` (host not resolvable; also seen for a blocked government site), `brd_client_10110` or `brd_sr_rate_limit` (rate limits, no pause); `brd_client_10020`, `brd_client_10100`, `brd_client_10002` pause the stage (account suspended, zone limit, zone not found) | yes |
 | `brd_unlocker` | Bright Data | Unlocker error without a readable code | yes |
-| `target_<status>` | Bright Data, Jina, Firecrawl | The service reached the site, the site answered with this status. Two `target_404`/`target_410` before Firecrawl was asked end the live stages (K9) | yes, except K9 |
-| `failed` | Tavily | Tavily listed the URL in `failed_results`; its text is in the error the model sees | yes |
-| `no_result` | Tavily | Tavily's reply named no result | yes |
+| `target_<status>` | Jina, Bright Data, Firecrawl | The service reached the site, the site answered with this status. Two `target_404`/`target_410` before Firecrawl was asked end the live stages (K9) | yes, except K9 |
+| `failed` | Tavily (only if enabled) | Tavily listed the URL in `failed_results`; its text is in the error the model sees | yes |
+| `no_result` | Tavily (only if enabled) | Tavily's reply named no result | yes |
 | `http_<status>` | Keenable | Keenable could not provide the page; the error text carries its message, e.g. *The page is behind a login or paywall* (`Unprocessable entity`), *The target page took too long to respond* (`Gateway timeout`), *The target server denied access to this URL* (`Upstream forbidden`). `http_402` pauses Keenable (K7) | last stage |
 | `malformed` | any | The API answered 2xx with something that is no JSON object, or with an empty one | yes |
 | `timeout` | any | The stage's deadline (A0), an httpx timeout or the provider's own timeout | yes |
@@ -99,13 +99,13 @@ The plugin is not loaded. Check, in this order:
 The key is wrong or missing in the profile's `.env`. Hermes reads keys per profile; a key exported in the shell may not reach a gateway or a container. While this lasts, every URL goes on to the next stage and costs its quota.
 
 **`jina=api_429`.**
-Jina's limit without a key is 20 requests per minute, counted per IP. Several agents behind one address share it. Set `JINA_API_KEY`; no pause is started, the chain goes on to Firecrawl.
+Jina's limit without a key is 20 requests per minute, counted per IP. Several agents behind one address share it. Set `JINA_API_KEY`; no pause is started, the chain goes on to Bright Data (Jina is the first stage by default, so a 429 shows up often when several agents share one address).
 
 **`brightdata=brd_proxy_error` on government or other public-sector sites.**
 Without KYC, Bright Data refuses government sites and some other categories, and honours robots.txt. Expected; the other stages fetch these pages (D33).
 
 **`…=no_time`.**
-The URL's budget (Z1) was used up, mostly by a slow Bright Data request (up to 90 s) and further stages. The fallback (K8) then returns what was kept. If it happens often, check `web.extract_timeout`: with less than 180 the budget is smaller than 170 s.
+The URL's budget (Z1) was used up, mostly by a slow Bright Data request (up to 90 s) after a failed Jina request, and further stages. The fallback (K8) then returns what was kept. If it happens often, check `web.extract_timeout`: with less than 180 the budget is smaller than 170 s.
 
 **`Extract timed out after <n>s via extract-chain`, or the warning `web.extract_timeout is <n> s; 180 s are recommended`.**
 `web.extract_timeout` is too small for the chain. Set it to 180 (I2). The plugin keeps each URL 10 s below the setting, but Hermes discards the whole call when the setting is reached.
@@ -114,13 +114,13 @@ The URL's budget (Z1) was used up, mostly by a slow Bright Data request (up to 9
 A pause does not notice a top-up. It ends after 24 hours (K7); to use the stage at once, restart Hermes or the gateway. `errors.log` shows when a pause began: `extract-chain: Firecrawl paused for 86400 s (api_402)`.
 
 **Warning `EXTRACT_CHAIN_ORDER has unknown or repeated names`.**
-A name in the list is misspelt or repeated. The warning names the order used. Valid names: `brightdata`, `jina`, `firecrawl`, `tavily`, `keenable`.
+A name in the list is misspelt or repeated. The warning names the order used. Valid names: `jina`, `brightdata`, `firecrawl`, `tavily`, `keenable`. Tavily is not in the default order; it runs only if you name it.
 
 **`keenable=http_401` / `http_403`.**
 The Keenable key is invalid or disabled. Without a reference copy, check C5 is off, consent walls stay unresolved and come back with the note *Consent wall detected …*.
 
 **All stages fail with `ConnectError` or `ProxyError`.**
-The host cannot reach the APIs. Allow HTTPS to `api.brightdata.com`, `r.jina.ai`, `api.firecrawl.dev`, `api.tavily.com` and `api.keenable.ai` (I4).
+The host cannot reach the APIs. Allow HTTPS to `r.jina.ai`, `api.brightdata.com`, `api.firecrawl.dev` and `api.keenable.ai`, and to `api.tavily.com` if Tavily is in your order (I4).
 
 - The plugin honours `HTTPS_PROXY` and `NO_PROXY`.
 - `ProxyError` means the proxy refused the connection, typically a missing allowlist entry.
@@ -147,9 +147,9 @@ Hermes caches successful results, notes included, for `web.cache_ttl_minutes` (d
 A Hermes update moved the policy module, and the plugin fetches nothing without the blocklist (S7). `errors.log` shows `extract-chain: tools.website_policy not importable; every URL refused` for each call. Update the plugin; until then, set `web.extract_backend` to another provider.
 
 **Credits drain faster than expected.**
-Bright Data and Keenable are asked for every URL (default order); the later stages only when earlier ones fail or are suspect. Common causes for Firecrawl:
+Jina and Keenable are asked for every URL (default order); the later stages only when earlier ones fail or are suspect. Common causes for Firecrawl:
 
-- sites that block Bright Data and Jina;
+- sites that block Jina and Bright Data;
 - PDFs, which cost 1 credit per page (capped at 30, A2);
 - target 403/404 pages, which Firecrawl bills when it returns a document.
 
@@ -160,13 +160,13 @@ The counts per stage in the log show which sites cause it.
 | Situation | Behaviour |
 |---|---|
 | Duplicate URLs in one call | Fetched once, returned at every position as an entry of its own (S5). |
-| Redirect | Bright Data, Jina and Tavily follow redirects themselves and report no final URL: no note, and the blocklist sees only the input URL. Firecrawl and Keenable report the final URL: note V10 where it points to another page, and the blocklist is checked on it (S7). |
+| Redirect | Jina, Bright Data and Tavily (if enabled) follow redirects themselves and report no final URL: no note, and the blocklist sees only the input URL. Firecrawl and Keenable report the final URL: note V10 where it points to another page, and the blocklist is checked on it (S7). |
 | Redirect to a blocked site | The result is replaced by Hermes' policy block entry (S7). |
 | Website blocklist | Checked before any request; blocked URLs reach no provider. |
 | Consent wall everywhere | The first consent page comes back with the wall note listing all reasons, unless a suspect result was kept (K8). Hermes caches it like any success. |
 | Page gone (404/410) | Two live stages with 404 or 410 before Firecrawl was asked end the live stages; Keenable's copy comes back with V14, or the error lists the reasons (K9). After Firecrawl the chain runs to its end. |
 | Firecrawl returns an empty `<body></body>` | Treated as empty; moves on. |
-| Long PDF via Firecrawl | Firecrawl reads the first 30 pages; the note says *PDF cut to the first 30 of N pages*. Bright Data, Jina and Tavily read PDFs without a cap. |
+| Long PDF via Firecrawl | Firecrawl reads the first 30 pages; the note says *PDF cut to the first 30 of N pages*. Jina, Bright Data and Tavily (if enabled) read PDFs without a cap. |
 | Page that loads with status 200 but shows "Access denied" or a challenge text | Recognised as a bot-check page if it is shorter than 1,500 visible characters and contains a phrase of the list (E7), or as suspect below 3,000 characters (C3); the chain moves on. If no stage has the page, it comes back with the note V11. |
 | URL with a fragment (`#…`) | Jina does not receive the fragment; pages that route by fragment may come back as the start page. |
 | No key at all | The provider reports itself unavailable, and Hermes hides `web_extract` unless another web backend is available. Jina alone does not make it available (S2). |
