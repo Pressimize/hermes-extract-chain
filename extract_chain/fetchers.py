@@ -144,6 +144,8 @@ async def brightdata(client: httpx.AsyncClient, url: str, key: str, zone: str, *
         if not data:
             return _error("Bright Data", "malformed reply", "malformed")
         status = data.get("status_code")
+        if isinstance(status, str) and status.isdigit():  # documented as int; a string is read as well
+            status = int(status)
         if isinstance(status, int) and status >= 400:
             return _target("Bright Data", status)
         body = data.get("body")

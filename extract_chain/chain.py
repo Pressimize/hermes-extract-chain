@@ -314,7 +314,9 @@ async def run_chain(
             if not waited:  # N9: the reference is needed now; later stages do not wait again
                 waited = True
                 ref = await keenable_doc(left())
-                reference_len = len(_visible(ref)) if ref is not None and not ref.get("error") else None
+                # only a real copy is a reference; a consent page or bot check of Keenable is none (second opinion)
+                usable = ref is not None and classify(ref) in ("ok", "thin")
+                reference_len = len(_visible(ref)) if usable else None
             rule = suspect(doc, reference_len)
             if rule is None:
                 steps.append(f"{stage.id}={kind}")

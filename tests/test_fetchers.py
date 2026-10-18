@@ -451,3 +451,8 @@ def test_jina_header_block_only_in_the_first_4000_characters():  # N12: a late "
     text = "Warning: Target URL returned error 404\n" + "x" * 4000 + "\nMarkdown Content:\nText"
     out = call(fetchers.jina, reply(httpx.Response(200, text=text)), U, "jn-key")
     assert out == {"title": "", "content": text, "final_url": None}
+
+
+def test_brightdata_status_code_as_text():  # N11 (c): documented as a number; a string is read as well
+    out = call(fetchers.brightdata, reply(bd_reply("404", "")), U, "bd-key", "z")
+    assert out["code"] == "target_404" and out["target_status"] == 404

@@ -859,3 +859,10 @@ def test_gone_copy_that_is_thin_is_taken():  # N6, N17a: a short copy still has 
     s, _ = stages(gone("Bright Data", 404), gone("Jina", 410))
     out = run(s, doc("k" * 200, title="KE"))
     assert out["title"] == "KE" and notes(out) == [NOTE_GONE.format(status=410)]
+
+
+def test_keenable_consent_page_is_no_reference():  # N7.5, K3: only an ok or thin copy is a reference
+    wall = doc("Cookies zustimmen. Alle akzeptieren. " + "Datenschutzeinstellungen " * 400)
+    s, fakes = stages(doc(ARTICLE, title="BD"), doc(ARTICLE))
+    out = run(s, wall)
+    assert out["title"] == "BD" and fakes[1].calls == 0  # the longer consent page does not make Bright Data suspect
