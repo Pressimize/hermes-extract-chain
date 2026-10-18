@@ -1,121 +1,139 @@
-"""T2: replay the chain on stored raw results of the chain test of 2026-10-09 (no network, no Hermes).
+"""T2 (N23): replay the chain on stored single-provider results of the web benchmark (no network, no Hermes).
 
-Maintainer only: needs the raw article texts, which are not published.
+Maintainer only: the stored results contain page texts and are not published.
 
-    uv run python scripts/replay.py RAW_JSONL PROTOTYPE CLOSING
+    uv run python scripts/replay.py RAWDATA GRADES [--order brightdata,jina,firecrawl,tavily,keenable] [--run vorlauf]
 
-RAW_JSONL  raw results of the chain test (not published, contains article texts): one JSON line per article with
-           "id" and "docs" = {"tinyfish"|"firecrawl"|"keenable": {"url", "title", "content", "error"}}.
-PROTOTYPE  "path/to/file.py:function" of the earlier chain prototype, called as function(tinyfish_doc,
-           firecrawl_fetch, keenable_fetch) -> (doc, source, calls, reason); used for comparison.
-CLOSING    "path/to/file.py:NAME" of a dict {article id: [closing sentence, optional "ALT:" older variant]}
-           for the free articles, read without executing the file.
+RAWDATA  folder with laeufe/<run>/<provider>.jsonl (one JSON line per case: "id", "content", "error", "code", ...);
+         Firecrawl from laeufe/d1/firecrawl.jsonl when the run is "vorlauf" (as in the benchmark).
+GRADES   CSV with one row per case: "id" and per provider the grade of its single result against the ground truth
+         (voll = complete, teil = partial, klar = failure the chain can see, unklar = silent failure).
 
-Prints per article the source chosen by the prototype and by the plugin, the plugin's notes and whether a free
-article is complete (closing sentence present). Prints no article text. The data set is not published.
+The stored results are turned into what the plugin's fetchers return (target status, no final URL where the
+provider gives none), sent through run_chain, and the returned result is graded with the grade of the provider it
+came from. Prints counts (complete, partial, wrong, nothing), the sources, and the fallback and paywall notes per
+source stage. Prints no page text.
 """
 
-import ast
+import argparse
 import asyncio
-import importlib.util
+import collections
+import csv
 import json
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from extract_chain.chain import NOTE_FIRECRAWL, NOTE_KEENABLE, NOTE_WALL, run_chain  # noqa: E402
+from extract_chain import chain  # noqa: E402
+from extract_chain.chain import Stage, run_chain  # noqa: E402
+
+NAMES = {
+    "brightdata": "Bright Data",
+    "jina": "Jina",
+    "firecrawl": "Firecrawl",
+    "tavily": "Tavily",
+    "keenable": "Keenable",
+}
+NO_FINAL_URL = {"brightdata", "jina", "tavily"}  # N11-N13: these providers report no final URL
+_JINA_WARNING = re.compile(r"^Warning: Target URL returned error (\d{3})", re.MULTILINE)
+_TARGET = re.compile(r"target_(\d{3})")
+NOTES = ("NOTE_LONGEST", "NOTE_CHECK", "NOTE_WALL", "NOTE_GONE", "NOTE_PAYWALL")
 
 
-def tinyfish_doc(d):
-    err = d.get("error")
-    if not err:
-        return {"title": d.get("title") or "", "content": d.get("content") or ""}
-    code = err if re.fullmatch(r"[a-z_]+", err) else None
-    return {"error": f"TinyFish: {err}"[:210], **({"code": code} if code else {})}
+def load(path: Path) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    # split at "\n" only: page texts may hold other line separators (U+2028) that splitlines() would cut at
+    rows = (json.loads(line) for line in path.read_text(encoding="utf-8").split("\n") if line.strip())
+    return {row["id"]: row for row in rows}
 
 
-def other_doc(provider, d):
-    err = d.get("error")
-    if not err:
-        return {"title": d.get("title") or "", "content": d.get("content") or ""}
-    detail = err.split(" failed: ", 1)[-1]
-    try:  # Keenable's JSON body as stored by Hermes' provider
-        body = json.loads(detail)
-    except ValueError:
-        body = None
-    if isinstance(body, dict):  # a detail like "402" is JSON too, but no body
-        detail = body.get("message") or body.get("error") or detail
-    return {"error": f"{provider}: {detail}"[:210]}
+def jina_head(text: str) -> str:
+    end = text.find("Markdown Content:", 0, 4000)
+    return text[:end] if end >= 0 else ""
 
 
-def load_function(spec):
-    path, name = spec.rsplit(":", 1)
-    module_spec = importlib.util.spec_from_file_location("prototype", path)
-    module = importlib.util.module_from_spec(module_spec)
-    module_spec.loader.exec_module(module)
-    return getattr(module, name)
+def as_fetched(provider: str, row: dict | None) -> dict:
+    """What the plugin's fetcher would have returned for this stored result."""
+    if row is None:
+        return {"error": f"{NAMES[provider]}: no stored result", "code": "no_result"}
+    if row.get("error"):
+        failed = {"error": " ".join(str(row["error"]).split())[:220], "code": row.get("code") or "error"}
+        if m := _TARGET.fullmatch(str(row.get("code") or "")):
+            failed["target_status"] = int(m.group(1))
+        return failed
+    doc = {"title": row.get("title") or "", "content": row.get("content") or ""}
+    doc["final_url"] = None if provider in NO_FINAL_URL else row.get("final_url")
+    if provider == "jina":  # N12: a warning about the target page in the header block is an error
+        warning = _JINA_WARNING.search(jina_head(doc["content"]))
+        if warning and int(warning.group(1)) >= 400:
+            status = int(warning.group(1))
+            return {"error": f"Jina: target HTTP {status}", "code": f"target_{status}", "target_status": status}
+    return doc
 
 
-def load_dict(spec):
-    path, name = spec.rsplit(":", 1)
-    for node in ast.parse(Path(path).read_text(encoding="utf-8")).body:
-        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == name:
-            return ast.literal_eval(node.value)
-    raise SystemExit(f"{name} not found in {path}")
+def replay(order: list[str], data: dict[str, dict[str, dict]], case: str) -> tuple[str, dict]:
+    """(source provider or "", result entry) for one case."""
+    docs = {p: as_fetched(p, data[p].get(case)) for p in order}
+    by_id = {id(doc): p for p, doc in docs.items()}
+    picked: dict[str, int] = {}
+    original = chain._result
+
+    def record(url, doc, *notes):
+        picked["doc"] = id(doc)
+        return original(url, doc, *notes)
+
+    def fetch_of(doc):
+        async def fetch(deadline):
+            return doc
+
+        return fetch
+
+    async def run():
+        stages = [Stage(p, NAMES[p], fetch_of(docs[p])) for p in order if p != "keenable"]
+        reference = asyncio.get_running_loop().create_future()
+        reference.set_result(docs["keenable"])
+        return await run_chain(f"https://case.invalid/{case}", stages, reference, budget=1e9)
+
+    chain._result = record
+    try:
+        result = asyncio.run(run())
+    finally:
+        chain._result = original
+    return by_id.get(picked.get("doc"), ""), result
 
 
-def norm(s):
-    s = (s or "").replace("\\", "").replace("\xad", "").replace("*", "").replace("_", "")
-    return re.sub(r"\s+", " ", s).lower()
-
-
-def complete(content, sentences):
-    c = norm(content)
-    if norm(sentences[0]) in c:
-        return "yes"
-    return "old" if len(sentences) > 1 and norm(sentences[1].removeprefix("ALT:")) in c else "no"
-
-
-def source(out):
-    first = out["content"].split("\n", 1)[0]
-    for name, note in (("firecrawl", NOTE_FIRECRAWL), ("keenable", NOTE_KEENABLE), ("none", NOTE_WALL)):
-        if first.startswith(note.split("(", 1)[0]):
-            return name
-    return "none" if out["error"] else "tinyfish"
-
-
-def fixed(doc):
-    async def fetch():
-        return doc
-
-    return fetch
-
-
-def main():
-    raw, prototype, closing = Path(sys.argv[1]), load_function(sys.argv[2]), load_dict(sys.argv[3])
-    totals = {"prototype": 0, "plugin": 0}
-    print(f"{'id':<13} {'prototype':<10} {'plugin':<10} {'complete p/p':<13} notes")
-    for line in raw.read_text(encoding="utf-8").splitlines():
-        row = json.loads(line)
-        tf, fc, ke = (row["docs"][n] for n in ("tinyfish", "firecrawl", "keenable"))
-        proto_doc, proto_src, _, _ = prototype(tf, lambda fc=fc: fc, lambda ke=ke: ke)
-        out = asyncio.run(
-            run_chain(tf["url"], tinyfish_doc(tf), fixed(other_doc("Firecrawl", fc)), fixed(other_doc("Keenable", ke)))
-        )
-        notes = [ln[16:60] for ln in out["content"].splitlines() if ln.startswith("[extract-chain]")]
-        if out["error"]:
-            notes.append("error: " + out["error"][:80])
-        done = ""
-        if row["id"] in closing:
-            p, n = complete(proto_doc.get("content"), closing[row["id"]]), complete(out["content"], closing[row["id"]])
-            totals["prototype"] += p == "yes"
-            totals["plugin"] += n == "yes"
-            done = f"{p}/{n}"
-        print(f"{row['id']:<13} {proto_src:<10} {source(out):<10} {done:<13} {' | '.join(notes)}")
-    print(f"\nfree articles complete ({len(closing)}): prototype {totals['prototype']}, plugin {totals['plugin']}")
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("rawdata")
+    ap.add_argument("grades")
+    ap.add_argument("--order", default="brightdata,jina,firecrawl,tavily,keenable")
+    ap.add_argument("--run", default="vorlauf")
+    a = ap.parse_args()
+    order = [p.strip() for p in a.order.split(",") if p.strip() and p.strip() != "keenable"] + ["keenable"]
+    raw = Path(a.rawdata) / "laeufe"
+    data = {p: load(raw / a.run / f"{p}.jsonl") for p in order}
+    if a.run == "vorlauf" and "firecrawl" in order:
+        data["firecrawl"] = load(raw / "d1" / "firecrawl.jsonl")
+    with open(a.grades, encoding="utf-8") as fh:
+        grades = {row["id"]: row for row in csv.DictReader(fh)}
+    cases = [c for c in grades if all(grades[c].get(p) for p in order if p != "firecrawl")]
+    counts, notes, sources = collections.Counter(), collections.Counter(), collections.Counter()
+    for case in cases:
+        source, result = replay(order, data, case)
+        grade = grades[case].get(source) if source else ""
+        counts[{"voll": "complete", "teil": "partial"}.get(grade, "wrong" if source else "nothing")] += 1
+        sources[source or "-"] += 1
+        content = result.get("content") or ""
+        for name in NOTES:
+            if getattr(chain, name).split("{")[0] in content:
+                notes[f"{name} ({source or '-'})"] += 1
+    print(f"cases {len(cases)}, order {' -> '.join(order)}")
+    print("  " + ", ".join(f"{k} {counts[k]}" for k in ("complete", "partial", "wrong", "nothing")))
+    print("  source: " + ", ".join(f"{k} {v}" for k, v in sources.most_common()))
+    print("  notes: " + (", ".join(f"{k} {v}" for k, v in sorted(notes.items())) or "-"))
 
 
 if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
     main()
