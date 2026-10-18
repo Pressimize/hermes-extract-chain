@@ -254,6 +254,7 @@ async def run_chain(
     firecrawl_asked = False
     reference_len: int | None = None
     waited = False
+    interrupted = False
 
     def left() -> float:
         return budget - (clock() - start)
@@ -280,6 +281,11 @@ async def run_chain(
             else:
                 doc = await _call(stage.name, stage.fetch, remaining)
                 firecrawl_asked |= stage.id == "firecrawl" and doc.get("code") not in ("paused", "interrupted")
+            if doc.get("code") == "interrupted":  # S8, N5: skip the rest and do not wait for Keenable
+                steps.append(f"{stage.id}=interrupted")
+                reasons.append(doc["error"])
+                interrupted = True
+                break
             kind = classify(doc, full_page=stage.full_page)
             if kind == "paywall":
                 steps.append(f"{stage.id}=paywall")
@@ -295,9 +301,11 @@ async def run_chain(
                     gone.append(doc["target_status"])
                 if len(gone) >= GONE_MIN and not firecrawl_asked:  # N6: the page is gone; no further live request
                     copy = await keenable_doc(left())
-                    if copy is not None and classify(copy) not in ("error", "empty", "challenge"):
-                        steps.append(f"keenable={copy.get('code') or 'gone_copy'}")
-                        return _result(url, copy, NOTE_GONE.format(status=gone[-1]))
+                    copy_kind = classify(copy) if copy is not None else ""
+                    if copy_kind in ("ok", "thin", "paywall"):  # a consent page or bot check is no copy (N17a)
+                        steps.append("keenable=gone_copy")
+                        notes = [NOTE_GONE.format(status=gone[-1])] + ([NOTE_PAYWALL] if copy_kind == "paywall" else [])
+                        return _result(url, copy, *notes)
                     if copy is not None:
                         steps.append(f"keenable={copy.get('code') or classify(copy)}")
                         reasons.append(_reason("Keenable", copy, classify(copy)))
@@ -316,7 +324,9 @@ async def run_chain(
             reasons.append(_reason(stage.name, doc, rule))
 
         # N5: Keenable is the last stage; its request has been running since the start.
-        if reference is None:
+        if interrupted:  # the provider cancels the Keenable request
+            doc = {"error": "Keenable: interrupted", "code": "interrupted"}
+        elif reference is None:
             doc = {"error": "Keenable: no API key", "code": "no_key"}
         else:
             doc = await keenable_doc(left())
@@ -355,12 +365,15 @@ async def run_chain(
         log.warning("extract-chain %s: chain failed: %s", _host(url), type(exc).__name__)
         return failure(url, f"extract-chain: {type(exc).__name__}")
     finally:
-        if not any(s.startswith("keenable=") for s in steps):  # N20: Keenable is always listed
-            if reference is None:
-                steps.append("keenable=no_key")
-            elif reference.done() and not reference.cancelled() and reference.exception() is None:
-                ref = reference.result()
-                steps.append(f"keenable=ref_{ref.get('code') or classify(ref)}")
-            else:
-                steps.append("keenable=pending")
+        try:  # S6: the log line must never fail the URL or the call
+            if not any(s.startswith("keenable=") for s in steps):  # N20: Keenable is always listed
+                if reference is None:
+                    steps.append("keenable=no_key")
+                elif reference.done() and not reference.cancelled() and reference.exception() is None:
+                    ref = reference.result()
+                    steps.append(f"keenable=ref_{ref.get('code') or classify(ref)}")
+                else:
+                    steps.append("keenable=pending")
+        except Exception:
+            steps.append("keenable=exception")
         log.info("extract-chain %s: %s", _host(url), " ".join(steps))

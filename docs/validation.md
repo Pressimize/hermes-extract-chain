@@ -1,6 +1,8 @@
 # Validation
 
-Results for T1–T4 in [design.md](design.md); T5 (lint, CI) is what CI itself runs. No article texts are stored here; the raw data stays outside the repository. URL lists and per-URL results: [`data/`](../data). How the providers were chosen: [evaluation.md](evaluation.md).
+Results for T1–T4 in [design.md](design.md); T5 (lint, CI) is what CI itself runs. No page texts are stored here; the raw data stays outside the repository. URL lists and per-URL results of v0.1–v0.2: [`data/`](../data). How the providers were chosen: [evaluation.md](evaluation.md).
+
+Sections marked *history* tested the TinyFish chain of v0.1–v0.2. Their rule IDs (K1–K7, V2, V4, V8–V9, A1) are those of design.md at tag `v0.2.6`, not of the current design.
 
 Which check ran against which version. What each version changed: [CHANGELOG.md](../CHANGELOG.md).
 
@@ -11,12 +13,37 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.2.4:** unit tests, replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
 - **v0.2.5:** unit tests and stored data (section *v0.2.5: stored data*). Unlike the releases before, the classification changes results.
 - **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 are now killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
+- **v0.3.0:** unit tests; replay on the data of web benchmark v2 (section *v0.3.0*); live check pending.
 
 ## T1 – Unit tests
 
 `uv run pytest`: all tests pass without network access, locally (Python 3.14) and in CI (Python 3.11 and 3.14).
 
-## T2 – Replay on the chain-test data
+## v0.3.0
+
+### T2 – Replay on the web benchmark v2 data
+
+**Data.** Web benchmark v2 (2026-10-17/18, [evaluation.md](evaluation.md#web-benchmark-v2-2026-10-1718)) fetched each page once with each provider and graded every single result against a ground truth: complete, partial, failure the chain can see, or silent failure. The replay uses the 132 pages graded for the chain's providers.
+
+**Method.** `scripts/replay.py` turns each stored result into what the plugin's fetcher returns (target status from the error code or Jina's warning line, no final URL for Bright Data, Jina and Tavily), sends the results through the real `run_chain` with Keenable's stored result as the reference (K3), and grades the returned text with the grade of the provider it came from. No network, no time limit; timings are not part of the replay.
+
+**Result** (acceptance T2: at least 116 complete, at most 6 wrong):
+
+| Order | Complete | Partial | Wrong | No result |
+|---|---|---|---|---|
+| default: Bright Data → Jina → Firecrawl → Tavily → Keenable | **118** | 9 | 5 | 0 |
+| `EXTRACT_CHAIN_ORDER=jina,brightdata,firecrawl,tavily` | 117 | 8 | 7 | 0 |
+
+- **T2 accepted** for the default order.
+- **Source of the returned result** (default order): Bright Data 97, Jina 19, Firecrawl 8, Keenable 7, Tavily 1.
+- **Notes** (default order): the paywall note (V3) 5 times, all on Bright Data results; the bot-check fallback (V11) once. No result needed the longest-result fallback (V15), the wall fallback (V5) or the page-gone copy (V14).
+- **Against the benchmark model** (the rules computed on the same grades, 118 complete and 4 wrong): two cases differ, neither changes the number of complete results. On one page every stage failed; the plugin returns the bot-check page of the first stage with its note (fallback), which the replay counts as wrong and the model counted as no result. On another page the plugin reads the error status in Jina's header block (A7) and takes Firecrawl's result instead of Jina's; both are partial.
+
+### T3 – Live check
+
+Pending: 20 pages from the benchmark through Hermes' real `web_extract` path in a throwaway profile with `web.extract_timeout: 180` (design T3).
+
+## T2 – Replay on the chain-test data (history)
 
 ### Data set
 
@@ -42,7 +69,7 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
   - No paywall hit of a chain provider is lost. One Exa hit is lost; Exa is not part of the chain.
   - Still wrong: `metered3` via Parallel and Tavily (registration and subscription texts). Neither provider is in the chain.
 
-## T3 – Live check (v0.1.0)
+## T3 – Live check (v0.1.0, history)
 
 ### Smoke test
 
@@ -115,7 +142,7 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
 
 [`data/live-check/results.csv`](../data/live-check/results.csv) has one row per URL: paywall status, the plugin's log line (the live run used v0.1.0, which logged Firecrawl and Keenable errors as `error`; v0.2.0 shows codes, L1), the length of the content as the model sees it, the duration and the assessment. The test profile had `web.extract_char_limit: 30000`; Hermes' default is 15,000.
 
-## T4 – Review against the design
+## T4 – Review against the design (v0.1.0, history)
 
 An independent review checked code, tests and this file against every requirement ID and found no blocker. Fixed:
 
@@ -126,7 +153,7 @@ An independent review checked code, tests and this file against every requiremen
 
 Left open on purpose: no concurrency limit for Firecrawl (K6, D16).
 
-## Edge-case review (v0.2.0, 2026-10-10)
+## Edge-case review (v0.2.0, 2026-10-10, history)
 
 The review covered failure modes and costs: Hermes' extract path, plugin loading and installation, and the providers' documented failure behaviour. Findings, fixed in v0.2.0 (D13, [CHANGELOG.md](../CHANGELOG.md)):
 
@@ -135,7 +162,7 @@ The review covered failure modes and costs: Hermes' extract path, plugin loading
 - Rules on non-news pages: the 554 TinyFish texts of an earlier search test (software documentation, forums and Q&A sites, mostly English) produce no wall or paywall classification.
 - Remaining by design: [design.md, section 13](design.md#13-known-limitations).
 
-## v0.2.5: stored data
+## v0.2.5: stored data (history)
 
 Three checks of v0.2.4 against v0.2.5 on stored data. Texts are never quoted; hosts, ids, lengths, classes and counts only.
 

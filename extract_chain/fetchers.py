@@ -134,12 +134,13 @@ async def brightdata(client: httpx.AsyncClient, url: str, key: str, zone: str, *
         data = _json(response)
         inner = data.get("headers") if isinstance(data.get("headers"), dict) else {}
         headers = {k.lower(): str(v) for k, v in [*response.headers.items(), *inner.items()]}
-        if "x-brd-error" in headers or "x-brd-error-code" in headers:
-            code = headers.get("x-brd-error-code", "").lower()
-            code = code if _CODE.fullmatch(code) else "unlocker"
-            detail = f"{code} {headers.get('x-brd-error', '')}".strip()
-            extra = {"quota": True} if code in BRIGHTDATA_QUOTA_CODES else {}
-            return _error("Bright Data", detail, f"brd_{code}", key, **extra)
+        if any(h in headers for h in ("x-brd-error", "x-brd-error-code", "x-brd-err-code")):
+            # x-brd-error-code: Unlocker code; x-brd-err-code: code passed on from the proxy network (client_...)
+            codes = [headers.get(h, "").lower() for h in ("x-brd-error-code", "x-brd-err-code")]
+            code = next((c for c in codes if _CODE.fullmatch(c)), "unlocker")
+            text = headers.get("x-brd-error") or headers.get("x-brd-err-msg") or ""
+            extra = {"quota": True} if BRIGHTDATA_QUOTA_CODES & set(codes) else {}
+            return _error("Bright Data", f"{code} {text}".strip(), f"brd_{code}", key, **extra)
         if not data:
             return _error("Bright Data", "malformed reply", "malformed")
         status = data.get("status_code")
