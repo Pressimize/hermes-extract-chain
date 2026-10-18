@@ -109,10 +109,9 @@ def test_manifest_and_register():  # S1, N4
         "BRIGHTDATA_API_KEY",
         "BRIGHTDATA_UNLOCKER_ZONE",
         "FIRECRAWL_API_KEY",
-        "TAVILY_API_KEY",
         "KEENABLE_API_KEY",
     ]
-    assert [e["name"] for e in m["optional_env"]] == ["JINA_API_KEY", "EXTRACT_CHAIN_ORDER"]
+    assert [e["name"] for e in m["optional_env"]] == ["TAVILY_API_KEY", "JINA_API_KEY", "EXTRACT_CHAIN_ORDER"]
     for entry in m["requires_env"] + m["optional_env"]:  # N4: names on _KEY are secrets, the others not
         assert bool(entry.get("secret")) is entry["name"].endswith("_KEY"), entry["name"]
     assert "tinyfish" not in json.dumps(m).lower()  # N1
@@ -171,7 +170,7 @@ def test_key_that_cannot_be_read_counts_as_missing(env):  # S3: e.g. UnscopedSec
 
 # --- N2 stage order -----------------------------------------------------------------------------------------
 
-DEFAULT = ["brightdata", "jina", "firecrawl", "tavily", "keenable"]
+DEFAULT = ["jina", "brightdata", "firecrawl", "keenable"]  # N2, D-1: Jina first, Tavily only on request
 
 
 @pytest.mark.parametrize(
@@ -824,3 +823,11 @@ def test_url_budget_warning_boundary(web_config, caplog, value, warned):  # N9: 
 def test_url_budget_has_a_floor(web_config):  # N9: never below one stage's minimum
     web_config["config"] = {"extract_timeout": 15}
     assert provider.url_budget() == 10.0
+
+
+def test_default_order_without_setting(env):  # N2, D-1: Jina, Bright Data, Firecrawl, Keenable; no Tavily
+    del env["EXTRACT_CHAIN_ORDER"]
+    api = Api()  # every service fails
+    out = extract(api, [URL])
+    assert api.asked() == ["jina", "brightdata", "firecrawl"] and api.keenable() == 1
+    assert "Tavily" not in out[0]["error"]

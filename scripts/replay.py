@@ -2,7 +2,7 @@
 
 Maintainer only: the stored results contain page texts and are not published.
 
-    uv run python scripts/replay.py RAWDATA GRADES [--order brightdata,jina,firecrawl,tavily,keenable] [--run vorlauf]
+    uv run python scripts/replay.py RAWDATA GRADES [--order jina,brightdata,firecrawl,keenable] [--run vorlauf]
 
 RAWDATA  folder with laeufe/<run>/<provider>.jsonl (one JSON line per case: "id", "content", "error", "code", ...);
          Firecrawl from laeufe/d1/firecrawl.jsonl when the run is "vorlauf" (as in the benchmark).
@@ -108,7 +108,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("rawdata")
     ap.add_argument("grades")
-    ap.add_argument("--order", default="brightdata,jina,firecrawl,tavily,keenable")
+    ap.add_argument("--order", default="jina,brightdata,firecrawl,keenable")
     ap.add_argument("--run", default="vorlauf")
     a = ap.parse_args()
     order = [p.strip() for p in a.order.split(",") if p.strip() and p.strip() != "keenable"] + ["keenable"]

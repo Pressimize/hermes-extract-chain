@@ -1,6 +1,6 @@
 name: extract-chain
 version: 0.3.0
-description: "web_extract fallback chain: Bright Data -> Jina -> Firecrawl (live) -> Tavily -> Keenable (copies), checks each result against Keenable's copy, with notes for the model"
+description: "web_extract fallback chain: Jina -> Bright Data -> Firecrawl (live) -> Keenable (index copy), Tavily optional; checks each result against Keenable's copy, with notes for the model"
 author: "Pressimize and Claude (Anthropic)"
 license: MIT
 homepage: "https://github.com/Pressimize/hermes-extract-chain"
@@ -17,15 +17,15 @@ requires_env:
   - name: FIRECRAWL_API_KEY
     description: "Firecrawl API key (stage skipped if unset)"
     secret: true
-  - name: TAVILY_API_KEY
-    description: "Tavily API key (stage skipped if unset)"
-    secret: true
   - name: KEENABLE_API_KEY
     description: "Keenable API key (reference copy and last stage; skipped if unset)"
     secret: true
 optional_env:
+  - name: TAVILY_API_KEY
+    description: "Tavily API key (only used when EXTRACT_CHAIN_ORDER names tavily)"
+    secret: true
   - name: JINA_API_KEY
     description: "Jina Reader API key (optional; without it Jina allows 20 requests per minute)"
     secret: true
   - name: EXTRACT_CHAIN_ORDER
-    description: "Stage order, comma-separated: brightdata,jina,firecrawl,tavily,keenable (default); Keenable always last"
+    description: "Stage order, comma-separated (default jina,brightdata,firecrawl,keenable; tavily optional); Keenable always last"

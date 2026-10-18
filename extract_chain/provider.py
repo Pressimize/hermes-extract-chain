@@ -20,7 +20,9 @@ from . import fetchers
 from .chain import MIN_STAGE, URL_BUDGET_MAX, Fetch, Stage, failure, run_chain
 
 NAME = "extract-chain"
-DEFAULT_ORDER = ("brightdata", "jina", "firecrawl", "tavily", "keenable")  # N2
+# N2, D-1 (Andre 2026-10-18): Jina first (benchmark set 3: 170 against 160 complete with Bright Data first; several
+# agents share one Jina rate limit, Bright Data then catches its 429s); Tavily only on request (no effect measured).
+DEFAULT_ORDER = ("jina", "brightdata", "firecrawl", "keenable")
 ORDER_ENV = "EXTRACT_CHAIN_ORDER"
 NAMES = {
     "brightdata": "Bright Data",

@@ -44,6 +44,7 @@ _web = types.ModuleType("tools.web_tools")
 _web._load_web_config = _load_web_config
 sys.modules["tools.web_tools"] = _web
 
+ALL_STAGES = "brightdata,jina,firecrawl,tavily,keenable"
 KEYS = {
     "BRIGHTDATA_API_KEY": "bd-SECRET",
     "BRIGHTDATA_UNLOCKER_ZONE": "unlocker1",
@@ -56,9 +57,11 @@ KEYS = {
 
 @pytest.fixture
 def env():
-    """All keys and the Bright Data zone set; tests may delete or replace entries."""
+    """All keys and the Bright Data zone set, and all five stages in the order the tests were written for
+    (the default order leaves Tavily out and starts with Jina, N2); tests may delete or replace entries."""
     ENV.clear()
     ENV.update(KEYS)
+    ENV["EXTRACT_CHAIN_ORDER"] = ALL_STAGES
     yield ENV
     ENV.clear()
 
