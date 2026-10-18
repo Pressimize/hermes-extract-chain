@@ -866,3 +866,14 @@ def test_keenable_consent_page_is_no_reference():  # N7.5, K3: only an ok or thi
     s, fakes = stages(doc(ARTICLE, title="BD"), doc(ARTICLE))
     out = run(s, wall)
     assert out["title"] == "BD" and fakes[1].calls == 0  # the longer consent page does not make Bright Data suspect
+
+
+def test_gone_without_keenable_answer_names_keenable():  # N6: the reasons list Keenable when it did not answer
+    clock = Clock()
+
+    def used_up():
+        clock.now += 20.0  # Jina uses up the budget: no time is left to wait for Keenable
+
+    s, _ = stages(gone("Bright Data", 404), Fake(gone("Jina", 404), then=used_up))
+    out = run(s, "pending", budget=20.0, clock=clock)
+    assert out["error"].endswith("Keenable: no time left")

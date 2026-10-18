@@ -134,7 +134,7 @@ async def brightdata(client: httpx.AsyncClient, url: str, key: str, zone: str, *
         data = _json(response)
         inner = data.get("headers") if isinstance(data.get("headers"), dict) else {}
         headers = {k.lower(): str(v) for k, v in [*response.headers.items(), *inner.items()]}
-        if any(h in headers for h in ("x-brd-error", "x-brd-error-code", "x-brd-err-code")):
+        if any(headers.get(h, "").strip() for h in ("x-brd-error", "x-brd-error-code", "x-brd-err-code")):
             # x-brd-error-code: Unlocker code; x-brd-err-code: code passed on from the proxy network (client_...)
             codes = [headers.get(h, "").lower() for h in ("x-brd-error-code", "x-brd-err-code")]
             code = next((c for c in codes if _CODE.fullmatch(c)), "unlocker")

@@ -309,6 +309,9 @@ async def run_chain(
                     if copy is not None:
                         steps.append(f"keenable={copy.get('code') or classify(copy)}")
                         reasons.append(_reason("Keenable", copy, classify(copy)))
+                    elif reference is not None:  # Keenable did not answer within the time left
+                        steps.append("keenable=no_time")
+                        reasons.append("Keenable: no time left")
                     return failure(url, "; ".join(reasons))
                 continue
             if not waited:  # N9: the reference is needed now; later stages do not wait again
