@@ -829,3 +829,33 @@ def test_redirect_url_cut_to_200_characters_and_one_line():  # V10, V1
     assert redirected(URL, "https://other.example/a\nb c").splitlines()[0] == NOTE_REDIRECT.format(
         final="https://other.example/a b c"
     )
+
+
+# --- gaps found in the review against the spec (2026-10-18) -------------------------------------------
+
+
+@pytest.mark.parametrize("skipped", [err("Firecrawl", "API 402 (paused for another 3 h)", "paused"), "no_time"])
+def test_paused_or_skipped_firecrawl_was_not_asked(skipped):  # N6: only a request that went out counts
+    order = ("firecrawl", "brightdata", "jina", "tavily")
+    if skipped == "no_time":
+        clock = Clock()
+        s, fakes = stages(doc(ARTICLE), gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), order=order)
+        out = run(s, doc(ARTICLE, title="KE"), budget=5.0, clock=clock)  # below MIN_STAGE: every stage is skipped
+        assert [f.calls for f in fakes] == [0, 0, 0, 0]
+        assert out["title"] == "KE" and "Firecrawl: no time left" in notes(out)[0]  # Keenable's copy, already there
+        return
+    s, fakes = stages(skipped, gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), order=order)
+    out = run(s, doc(ARTICLE))
+    assert notes(out) == [NOTE_GONE.format(status=404)] and fakes[3].calls == 0
+
+
+def test_keenable_loses_a_tie_with_a_live_stage():  # N8 (a): Keenable is the last position
+    s, _ = stages(doc("a" * 300, title="BD"), None, None, None)
+    out = run(s, doc("k" * 300, title="KE"))
+    assert out["title"] == "BD"
+
+
+def test_gone_copy_that_is_thin_is_taken():  # N6, N17a: a short copy still has content
+    s, _ = stages(gone("Bright Data", 404), gone("Jina", 410))
+    out = run(s, doc("k" * 200, title="KE"))
+    assert out["title"] == "KE" and notes(out) == [NOTE_GONE.format(status=410)]

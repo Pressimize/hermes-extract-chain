@@ -85,7 +85,8 @@ def stage_order(value: str) -> list[str]:
         return list(DEFAULT_ORDER)
     names = [part.strip().lower() for part in value.split(",") if part.strip()]
     known = [n for n in dict.fromkeys(names) if n in NAMES and n != "keenable"]
-    if len(known) != len([n for n in names if n != "keenable"]) or not known:
+    invalid = len(set(names)) != len(names) or any(n not in NAMES for n in names)  # duplicates, Keenable included
+    if invalid or not known:
         _warn_once("order", "extract-chain: %s has unknown or repeated names; using %s", ORDER_ENV,
                    ",".join(known + ["keenable"]) if known else ",".join(DEFAULT_ORDER))  # fmt: skip
     return known + ["keenable"] if known else list(DEFAULT_ORDER)

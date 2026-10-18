@@ -179,7 +179,7 @@ No title comparison: it made no difference in the benchmark.
   - An API reply outside 2xx is `Jina: API <status>: <text>` (code `api_<status>`); 429 is its rate limit without a key.
   - Jina caches pages by default (documented as 5 minutes to 1 hour); the plugin does not switch that off.
 - **A8** Tavily Extract (N13):
-  - `POST https://api.tavily.com/extract` with `Authorization: Bearer <key>`; body `{"urls": [url], "extract_depth": "advanced", "format": "markdown", "timeout": <s>}`. `timeout` is the stage's time minus 5 s, at most 30 s (Tavily accepts 1–60 s; 30 s is its default for `advanced`).
+  - `POST https://api.tavily.com/extract` with `Authorization: Bearer <key>`; body `{"urls": [url], "extract_depth": "advanced", "format": "markdown", "timeout": <s>}`. `timeout` is the stage's time minus 5 s; with the stage deadline of 30 s that is at most 25 s (Tavily accepts 1–60 s; 30 s is its default for `advanced`; the slowest Tavily fetch measured took 18 s).
   - The text is `results[0].raw_content`; `results[0].url` is the source URL, not a final URL. An entry in `failed_results` is `Tavily: <Tavily's text>` (code `failed`; Tavily does not document these texts), no entry at all `Tavily: no result`. An API reply outside 2xx is `Tavily: API <status>: <text>`.
 
 ## 9. Time budget

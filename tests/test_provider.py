@@ -804,3 +804,23 @@ def test_tavily_copy_note_through_the_provider(env):  # N17, N13
     out = extract(Api(tavily=tavily_ok()), [URL])
     reasons = "Bright Data: API 500: down; Jina: API 500: down; Firecrawl: API 500: down"
     assert out[0]["content"] == NOTE_COPY.format(provider="Tavily", reasons=reasons) + "\n\n" + ARTICLE
+
+
+# --- gaps found in the review against the spec (2026-10-18) -------------------------------------------
+
+
+def test_repeated_keenable_warns(caplog):  # N2: a duplicate is a duplicate, Keenable included
+    assert provider.stage_order("jina,keenable,keenable") == ["jina", "keenable"]
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
+
+@pytest.mark.parametrize(("value", "warned"), [(119, True), (120, False)])
+def test_url_budget_warning_boundary(web_config, caplog, value, warned):  # N9: a warning below 120 s
+    web_config["config"] = {"extract_timeout": value}
+    provider.url_budget()
+    assert bool([r for r in caplog.records if r.levelno == logging.WARNING]) is warned
+
+
+def test_url_budget_has_a_floor(web_config):  # N9: never below one stage's minimum
+    web_config["config"] = {"extract_timeout": 15}
+    assert provider.url_budget() == 10.0

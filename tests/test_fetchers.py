@@ -429,3 +429,25 @@ def test_megabyte_error_page_gives_a_short_error():  # A4, N15: page excerpts in
     page = "<p>error</p>  " * 400_000 + "ke-SECRET"
     out = call(fetchers.keenable, reply(httpx.Response(502, text=page)), U, "ke-SECRET")
     assert out["error"] == ("Keenable: " + "<p>error</p> " * 20)[:210]
+
+
+# --- gaps found in the review against the spec (2026-10-18) -------------------------------------------
+
+
+@pytest.mark.parametrize(("status", "failed"), [(399, False), (400, True)])
+def test_brightdata_target_status_boundary(status, failed):  # N11 (c): from 400 on the target page failed
+    out = call(fetchers.brightdata, reply(bd_reply(status, "# Text")), U, "bd-key", "z")
+    assert bool(out.get("error")) is failed
+
+
+@pytest.mark.parametrize(("status", "failed"), [(399, False), (400, True)])
+def test_jina_warning_boundary(status, failed):  # N12: from 400 on the warning is an error of the target page
+    head = f"Title: T\nWarning: Target URL returned error {status}: x\n"
+    out = call(fetchers.jina, reply(httpx.Response(200, text=jina_text(head=head))), U, "jn-key")
+    assert bool(out.get("error")) is failed
+
+
+def test_jina_header_block_only_in_the_first_4000_characters():  # N12: a late "Markdown Content:" is page text
+    text = "Warning: Target URL returned error 404\n" + "x" * 4000 + "\nMarkdown Content:\nText"
+    out = call(fetchers.jina, reply(httpx.Response(200, text=text)), U, "jn-key")
+    assert out == {"title": "", "content": text, "final_url": None}
