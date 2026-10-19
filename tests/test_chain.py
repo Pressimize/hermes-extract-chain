@@ -146,6 +146,12 @@ def test_wall_window():  # E3: the whole text below 4,000 characters, otherwise 
     assert classify(doc(WALL_TEXT + "a" * 5000)) == "wall"
 
 
+def test_bezahlschranke_is_a_general_marker():  # E4, E6: alone it is prose (IONOS, 2026-10-19)
+    assert classify(doc(ARTICLE + " Viele Funktionen liegen hinter einer Bezahlschranke.")) == "ok"
+    assert classify(doc(ARTICLE + " Bezahlschranke. Jetzt weiterlesen mit SPIEGEL+")) == "paywall"
+    assert classify(doc(ARTICLE + " Bezahlschranke. Jetzt weiterlesen")) == "paywall"
+
+
 def test_paywall_area_full_page_ignores_last_quarter():  # E4
     footer = " SPIEGEL+ Jetzt weiterlesen"
     page = "a" * (8000 - len(footer)) + footer
@@ -208,6 +214,19 @@ def test_suspect_consent_counts_occurrences():  # N7.4: two occurrences of one m
     assert suspect(doc(text + "a" * (1500 - len(text))), None) is None
     assert suspect(doc("Zustimmung. " + "a" * 1000), None) is None  # one occurrence
     assert suspect(doc("Consent und Einwilligung. " + "a" * 1000), None) == "consent"  # two markers count as well
+
+
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [
+        ("Cookie-Zustimmung. ", None),  # one hyphenated word
+        ("Cookiezustimmung. ", None),  # one word
+        ("Cookie-Einstellungen und Zustimmung. ", "consent"),  # two words
+        ("Cookie-Zustimmung, Cookie-Zustimmung. ", "consent"),  # the same word twice
+    ],
+)
+def test_suspect_consent_counts_words(text, kind):  # N7.4: a word with two markers counts once (F13)
+    assert suspect(doc(text + "a" * 1000), None) == kind
 
 
 @pytest.mark.parametrize(("reference", "rule"), [(1499, None), (1500, "shorter"), (1501, "shorter"), (None, None)])

@@ -57,6 +57,13 @@ def test_as_fetched_jina_warning_in_the_page_text_does_not_count():  # N12
     assert replay.as_fetched("jina", {"content": text})["content"] == text
 
 
+def test_as_fetched_brightdata_pdf_as_the_fetcher():  # A1, D39
+    pdf = "%PDF-1.7\n binary"
+    expected = {"error": "Bright Data: PDF file, not text", "code": "pdf"}
+    assert replay.as_fetched("brightdata", {"content": pdf}) == expected
+    assert replay.as_fetched("jina", {"content": pdf})["content"] == pdf  # only Bright Data passes the raw file on
+
+
 def test_as_fetched_jina_text_at_as_the_fetcher():  # E2, D37: lengths without the header lines in the replay too
     text = "Title: x\n\nMarkdown Content:\n" + ARTICLE
     assert replay.as_fetched("jina", {"content": text})["text_at"] == fetchers.jina_text_at(text) == 27

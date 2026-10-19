@@ -15,10 +15,25 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 are now killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
 - **v0.3.0:** unit tests; replay on the data of web benchmark v2, two sets (section *v0.3.0*); live check of 20 pages on 2026-10-19.
 - **v0.3.1:** unit tests; replay on the same two sets, compared page by page with v0.3.0 (section *v0.3.1*); no new live check (no change to the requests).
+- **v0.3.2:** unit tests; replay in the default order and with Bright Data first, page by page against v0.3.1; a probe of Bright Data with three requests (section *v0.3.2*).
 
 ## T1 – Unit tests
 
 `uv run pytest`: all tests pass without network access, locally (Python 3.14) and in CI (Python 3.11 and 3.14).
+
+## v0.3.2
+
+### T1 – Unit tests
+
+453 tests, ruff clean. New: error headers from the target page with a body (no error, no pause, also through the provider), with an empty or white-space body (error), outer error status with error headers (four cases), unknown zone (`api_400`), raw PDF (fetcher and replay), `bezahlschranke` alone and with a second marker, C4 counted per word.
+
+### T2 – Replay
+
+Default order, both sets: every page as in v0.3.1 (set 1 116 / 8 / 7 / 1, set 2 171 / 8 / 18 / 0). The PDF rule (D39) does not show there, because Jina answers first. With `EXTRACT_CHAIN_ORDER=brightdata,jina,firecrawl,keenable`, set 2: 162 complete / 8 partial / 27 wrong instead of 161 / 7 / 29; the three PDF pages now come from Jina instead of as Bright Data's bytes with a paywall note. Set 1 unchanged in that order (no PDF from Bright Data). `bezahlschranke` (E6) and C4 (per word) change no page in either order.
+
+### Probe of Bright Data (2026-10-19)
+
+Three requests with the benchmark key, header names and Bright Data's error headers only recorded: a page that sends `x-brd-error`, `x-brd-error-code: client_10002` and `x-brd-err-code: client_10020` itself (outer 200, status 200, body 166 characters, the three headers in the JSON field `headers`, D38); an unknown zone (outer 400, `zone "…" not found`, no error headers); a host that does not resolve (outer 200, status 502, empty body, `x-brd-error-code: proxy_error`).
 
 ## v0.3.1
 

@@ -53,6 +53,10 @@ def fetch_of(provider, handler, key=None, deadline=40.0):
 # --- N11 Bright Data -------------------------------------------------------------------------------
 
 
+# A1, D38: error headers a target page sent itself; Bright Data passes them on (probe 2026-10-19)
+FORGED = {"x-brd-error": "probe-target", "x-brd-error-code": "client_10002", "x-brd-err-code": "client_10020"}
+
+
 def bd_reply(status_code=200, body="# Text", headers=None, outer_headers=None, outer=200):
     payload = {"status_code": status_code, "headers": headers or {}, "body": body}
     return httpx.Response(outer, json=payload, headers=outer_headers or {})
@@ -129,6 +133,71 @@ def test_brightdata_other_codes_do_not_pause(code):  # N16: rate limits never pa
 def test_brightdata_outer_402_pauses_429_does_not():  # N16
     assert call(fetchers.brightdata, reply(httpx.Response(402)), U, "bd-key", "z")["quota"] is True
     assert "quota" not in call(fetchers.brightdata, reply(httpx.Response(429)), U, "bd-key", "z")
+
+
+def test_brightdata_target_headers_with_a_body_are_no_error():  # A1, D38: the target page sent them (probe 2026-10-19)
+    out = call(fetchers.brightdata, reply(bd_reply(200, "# Text", headers=FORGED)), U, "bd-key", "z")
+    assert out == {"title": "", "content": "# Text", "final_url": None}
+
+
+def test_brightdata_target_headers_do_not_hide_the_target_status():  # A1, D38
+    out = call(fetchers.brightdata, reply(bd_reply(404, "<html>gone</html>", headers=FORGED)), U, "bd-key", "z")
+    assert out["code"] == "target_404" and "quota" not in out
+
+
+@pytest.mark.parametrize("body", ["", " \n ", None])
+def test_brightdata_inner_headers_count_with_an_empty_body(body):  # A1, D38: an Unlocker error has no body
+    brd = {"x-brd-error": "Could not resolve host", "x-brd-error-code": "proxy_error"}
+    out = call(fetchers.brightdata, reply(bd_reply(502, body, headers=brd)), U, "bd-key", "z")
+    assert out["code"] == "brd_proxy_error"
+
+
+def test_brightdata_outer_headers_count_with_a_body():  # A1: outer headers come from Bright Data itself
+    brd = {"x-brd-error": "blocked", "x-brd-error-code": "proxy_error"}
+    out = call(fetchers.brightdata, reply(bd_reply(200, "# Text", outer_headers=brd)), U, "bd-key", "z")
+    assert out["code"] == "brd_proxy_error"
+
+
+@pytest.mark.parametrize(
+    ("outer", "code", "expected", "quota"),
+    [
+        (500, "client_10100", "brd_client_10100", True),  # a quota code
+        (402, "foo", "brd_foo", True),  # the outer status means a quota
+        (500, "proxy_error", "brd_proxy_error", False),
+        (429, "sr_rate_limit", "brd_sr_rate_limit", False),
+    ],
+)
+def test_brightdata_error_headers_with_an_outer_error_status(outer, code, expected, quota):  # A1, K7
+    response = httpx.Response(outer, text="error", headers={"x-brd-error": "text", "x-brd-error-code": code})
+    out = call(fetchers.brightdata, reply(response), U, "bd-key", "z")
+    assert out["code"] == expected and out.get("quota", False) is quota
+
+
+def test_brightdata_unknown_zone_is_an_api_error():  # A1, K7: probe 2026-10-19, no x-brd headers, no pause
+    out = call(fetchers.brightdata, reply(httpx.Response(400, text='zone "zz" not found')), U, "bd-key", "z")
+    assert out == {"error": 'Bright Data: API 400: zone "zz" not found', "code": "api_400"}
+
+
+@pytest.mark.parametrize("body", ["%PDF-1.7\n%\ufffd\ufffd binary", "\n  %PDF-1.5 x"])
+def test_brightdata_raw_pdf_is_an_error(body):  # A1, D39: Bright Data passes PDF files on as raw bytes
+    out = call(fetchers.brightdata, reply(bd_reply(200, body)), U, "bd-key", "z")
+    assert out == {"error": "Bright Data: PDF file, not text", "code": "pdf"}
+
+
+@pytest.mark.parametrize(
+    ("text", "pdf"),
+    [
+        ("%PDF-1.4", True),
+        ("%PDFx", False),
+        (" %PDF-", True),
+        ("PDF-1.4", False),
+        ("# A text about %PDF-1.4 files", False),
+        ("%pdf-1.4", False),
+        ("", False),
+    ],
+)
+def test_is_pdf(text, pdf):  # A1, D39: only the file header at the start
+    assert fetchers.is_pdf(text) is pdf
 
 
 # --- N12 Jina --------------------------------------------------------------------------------------
@@ -405,6 +474,28 @@ def test_key_is_masked_as_sent_and_percent_encoded(provider):  # N15, S3
 def test_key_echoed_from_the_authorization_header_is_masked(provider):  # S3
     echo = lambda r: httpx.Response(401, text=f"invalid key {r.headers['authorization']}")  # noqa: E731
     assert fetch_of(provider, echo)["error"].endswith("invalid key Bearer [key]")
+
+
+def test_key_in_an_unlocker_error_with_an_outer_error_status_is_masked():  # S3, A1
+    response = httpx.Response(500, headers={"x-brd-error": "bad bd-SECRET", "x-brd-error-code": "proxy_error"})
+    out = call(fetchers.brightdata, reply(response), U, "bd-SECRET", "z")
+    assert out["error"] == "Bright Data: proxy_error bad [key]"
+
+
+def test_key_as_an_unlocker_code_is_no_code():  # S3, L1: the code goes into the log line unmasked
+    brd = {"x-brd-error": "bad", "x-brd-error-code": "bd_secret_key_1"}
+    out = call(fetchers.brightdata, reply(bd_reply(502, "", headers=brd)), U, "bd_secret_key_1", "z")
+    assert out["code"] == "brd_unlocker" and "secret" not in str(out)
+
+
+def test_brightdata_null_header_value_is_no_error():  # A1: JSON null in the field headers
+    out = call(fetchers.brightdata, reply(bd_reply(200, "", headers={"x-brd-error": None})), U, "bd-key", "z")
+    assert "error" not in out and out["content"] == ""
+
+
+def test_brightdata_target_status_before_pdf():  # A1: a failing target page stays a target status
+    out = call(fetchers.brightdata, reply(bd_reply(404, "%PDF-1.7 x")), U, "bd-key", "z")
+    assert out["code"] == "target_404"
 
 
 def test_key_in_an_unlocker_error_is_masked():  # S3, N11 (b)

@@ -25,7 +25,7 @@ FULL_PAGE_PAYWALL_SHARE = 0.75  # E4: full pages end with footer and subscriptio
 PRINT_WINDOW = 5000  # N7.2: print-view markers count in the first characters only
 CHECK_BELOW = 3000  # N7.3: JavaScript and bot-check hints count only in texts shorter than this
 CONSENT_BELOW = 1500  # N7.4
-CONSENT_MIN = 2  # N7.4: occurrences, not different markers
+CONSENT_MIN = 2  # N7.4: words containing a marker, not different markers
 REFERENCE_FACTOR = 1.5  # N7.5: Keenable's copy at least this many times longer -> suspect
 REFERENCE_WAIT = 8.0  # K3, D35: the first stage that looks fine waits at most this long for Keenable's copy
 POLL = 1.0  # S8: a wait for Keenable checks the interrupt flag at least this often
@@ -38,7 +38,7 @@ SUSPECT_CHECK = [
     "pardon our interruption", "zugriff verweigert", "sicherheitsüberprüfung", "security check",
     "checking your browser",
 ]  # fmt: skip
-SUSPECT_CONSENT = r"cookie|consent|zustimm|einwillig"
+SUSPECT_CONSENT = r"[\w-]*(?:cookie|consent|zustimm|einwillig)[\w-]*"  # N7.4: a word, hyphenated ones too
 
 # N9: time budget of one URL; a stage with less time left is skipped.
 URL_BUDGET_MAX = 170.0
@@ -53,13 +53,13 @@ WALL = [
     "we value your privacy", "datenschutzeinstellungen", "cookie-einstellungen", "cookie settings", "adblock",
 ]  # fmt: skip
 PAYWALL_DEFINITE = [
-    "das war die leseprobe", "um den gesamten artikel", "bezahlschranke", "mehrfachnutzung erkannt",
+    "das war die leseprobe", "um den gesamten artikel", "mehrfachnutzung erkannt",
     "nur f(ue|ü)r abonnenten", r"registrieren und weiterlesen", "behind a login or paywall",
 ]  # fmt: skip
 PAYWALL = [
     "jetzt weiterlesen", "weiterlesen mit", "abo abschlie(ss|ß)en", r"plus-(artikel|inhalt)",
     "artikel freischalten", "anmelden und weiterlesen", r"spiegel\+", r"(?<!\w)z\+", r"(?<!\w)f\+",
-    "sz plus", r"heise\+", "weltplus", "paywall",
+    "sz plus", r"heise\+", "weltplus", "paywall", "bezahlschranke",
 ]  # fmt: skip
 # E7: bot-check phrases from the job-board measurement (2026-10-12); apostrophes are avoided on purpose.
 CHALLENGE = [

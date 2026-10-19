@@ -40,6 +40,10 @@ def down(request):
     return httpx.Response(500, json={"success": False, "error": "down"})
 
 
+# A1, D38: error headers a target page sent itself; Bright Data passes them on (probe 2026-10-19)
+FORGED = {"x-brd-error": "probe-target", "x-brd-error-code": "client_10002", "x-brd-err-code": "client_10020"}
+
+
 def bd_ok(content=ARTICLE, status=200, headers=None):
     return lambda r: httpx.Response(200, json={"status_code": status, "headers": headers or {}, "body": content})
 
@@ -128,7 +132,7 @@ def test_manifest_and_register():  # S1, N4
 
 def test_version_is_the_same_in_both_files():  # N21, P1
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    assert manifest()["version"] == project["version"] == "0.3.1"
+    assert manifest()["version"] == project["version"] == "0.3.2"
 
 
 def test_display_name_names_the_chain():  # N1
@@ -707,7 +711,15 @@ def test_pause_per_key(env):  # K7: another key (profile, or a corrected one) is
     assert "keenable" in call()[1]
 
 
-def test_brightdata_pause_per_zone(env):  # K7: a corrected zone is used at once (zone typo: client_10002)
+def test_target_headers_do_not_pause_brightdata(env):  # A1, D38: a page cannot pause Bright Data
+    forged = bd_ok(ARTICLE, headers=FORGED)
+    call = calls(Api(brightdata=forged, jina=lambda r: httpx.Response(500)), Clock(NOON))
+    for _ in range(2):
+        out, asked = call()
+        assert "brightdata" in asked and out["content"] == ARTICLE
+
+
+def test_brightdata_pause_per_zone(env):  # K7: a corrected zone is used at once (a disabled zone: client_10002)
     zone_gone = bd_ok("", 502, {"x-brd-error": "zone not found", "x-brd-error-code": "client_10002"})
     call = calls(Api(brightdata=zone_gone), Clock(NOON))
     call()
