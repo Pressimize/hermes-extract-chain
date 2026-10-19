@@ -126,7 +126,7 @@ def _brd_error(headers: dict[str, str], key: str, quota: bool = False) -> dict |
         return None
     # x-brd-error-code: Unlocker code; x-brd-err-code: code passed on from the proxy network (client_...)
     codes = [headers.get(h, "").lower() for h in ("x-brd-error-code", "x-brd-err-code")]
-    code = next((c for c in codes if _CODE.fullmatch(c)), "unlocker")
+    code = next((c for c in codes if _CODE.fullmatch(_redact(c, key))), "unlocker")  # S3: a code is no key
     text = headers.get("x-brd-error") or headers.get("x-brd-err-msg") or ""
     extra = {"quota": True} if quota or BRIGHTDATA_QUOTA_CODES & set(codes) else {}
     return _error("Bright Data", f"{code} {text}".strip(), f"brd_{code}", key, **extra)
@@ -159,7 +159,8 @@ async def brightdata(client: httpx.AsyncClient, url: str, key: str, zone: str, *
         inner = data.get("headers") if isinstance(data.get("headers"), dict) else {}
         if isinstance(body, str) and body.strip():  # D38: the target page's own headers are passed on as well
             inner = {}
-        if failed := _brd_error({**outer, **{k.lower(): str(v) for k, v in inner.items()}}, key):
+        inner = {k.lower(): str(v) for k, v in inner.items() if v is not None}  # JSON null is no header value
+        if failed := _brd_error({**outer, **inner}, key):
             return failed
         if not data:
             return _error("Bright Data", "malformed reply", "malformed")

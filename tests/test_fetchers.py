@@ -188,6 +188,7 @@ def test_brightdata_raw_pdf_is_an_error(body):  # A1, D39: Bright Data passes PD
     ("text", "pdf"),
     [
         ("%PDF-1.4", True),
+        ("%PDFx", False),
         (" %PDF-", True),
         ("PDF-1.4", False),
         ("# A text about %PDF-1.4 files", False),
@@ -473,6 +474,28 @@ def test_key_is_masked_as_sent_and_percent_encoded(provider):  # N15, S3
 def test_key_echoed_from_the_authorization_header_is_masked(provider):  # S3
     echo = lambda r: httpx.Response(401, text=f"invalid key {r.headers['authorization']}")  # noqa: E731
     assert fetch_of(provider, echo)["error"].endswith("invalid key Bearer [key]")
+
+
+def test_key_in_an_unlocker_error_with_an_outer_error_status_is_masked():  # S3, A1
+    response = httpx.Response(500, headers={"x-brd-error": "bad bd-SECRET", "x-brd-error-code": "proxy_error"})
+    out = call(fetchers.brightdata, reply(response), U, "bd-SECRET", "z")
+    assert out["error"] == "Bright Data: proxy_error bad [key]"
+
+
+def test_key_as_an_unlocker_code_is_no_code():  # S3, L1: the code goes into the log line unmasked
+    brd = {"x-brd-error": "bad", "x-brd-error-code": "bd_secret_key_1"}
+    out = call(fetchers.brightdata, reply(bd_reply(502, "", headers=brd)), U, "bd_secret_key_1", "z")
+    assert out["code"] == "brd_unlocker" and "secret" not in str(out)
+
+
+def test_brightdata_null_header_value_is_no_error():  # A1: JSON null in the field headers
+    out = call(fetchers.brightdata, reply(bd_reply(200, "", headers={"x-brd-error": None})), U, "bd-key", "z")
+    assert "error" not in out and out["content"] == ""
+
+
+def test_brightdata_target_status_before_pdf():  # A1: a failing target page stays a target status
+    out = call(fetchers.brightdata, reply(bd_reply(404, "%PDF-1.7 x")), U, "bd-key", "z")
+    assert out["code"] == "target_404"
 
 
 def test_key_in_an_unlocker_error_is_masked():  # S3, N11 (b)

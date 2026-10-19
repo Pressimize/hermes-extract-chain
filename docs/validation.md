@@ -15,6 +15,7 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 are now killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
 - **v0.3.0:** unit tests; replay on the data of web benchmark v2, two sets (section *v0.3.0*); live check of 20 pages on 2026-10-19.
 - **v0.3.1:** unit tests; replay on the same two sets, compared page by page with v0.3.0 (section *v0.3.1*); no new live check (no change to the requests).
+- **v0.3.2:** unit tests; replay in the default order and with Bright Data first, page by page against v0.3.1; a probe of Bright Data with three requests (section *v0.3.2*).
 
 ## T1 – Unit tests
 
@@ -24,7 +25,7 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 
 ### T1 – Unit tests
 
-448 tests, ruff clean. New: error headers from the target page with a body (no error, no pause, also through the provider), with an empty or white-space body (error), outer error status with error headers (four cases), unknown zone (`api_400`), raw PDF (fetcher and replay), `bezahlschranke` alone and with a second marker, C4 counted per word.
+453 tests, ruff clean. New: error headers from the target page with a body (no error, no pause, also through the provider), with an empty or white-space body (error), outer error status with error headers (four cases), unknown zone (`api_400`), raw PDF (fetcher and replay), `bezahlschranke` alone and with a second marker, C4 counted per word.
 
 ### T2 – Replay
 

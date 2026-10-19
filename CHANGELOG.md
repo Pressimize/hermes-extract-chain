@@ -11,6 +11,7 @@ The remaining findings of the nine-model review of 0.3.0, checked with a live pr
 - A raw PDF file from Bright Data (the body starts with `%PDF-`) is an error with the code `pdf`, and the chain goes on (A1, D39). Bright Data passed PDF pages on as bytes, which could even get a paywall note; Jina and Firecrawl read the files.
 - `bezahlschranke` is a general paywall marker now and needs a second one (E6); alone it occurred only in prose.
 - The consent check C4 counts words: "Cookie-Zustimmung" is one hit, not two (N7.4).
+- Smaller hardening of Bright Data's error headers: a code that contains the key becomes `brd_unlocker` (the code goes into the log line), and a JSON `null` as a header value is no error (A1, S3).
 
 **Docs:** an unknown Bright Data zone gives `api_400` and no pause; `client_10002` means a disabled zone. The entry for 0.3.1 below said a mistyped zone answers `client_10002`; that was wrong, the per-zone pause matters when a disabled zone is replaced. Z1 notes that below 10 s Hermes ends the call before the plugin's budget. Design A1, K7, E6, C4, Z1, D38, D39; troubleshooting; validation.
 
