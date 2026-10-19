@@ -1,5 +1,5 @@
 name: extract-chain
-version: 0.3.1
+version: 0.3.2
 description: "web_extract fallback chain: Jina -> Bright Data -> Firecrawl (live) -> Keenable (index copy), Tavily optional; checks each result against Keenable's copy, with notes for the model"
 author: "Pressimize and Claude (Anthropic)"
 license: MIT

@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from extract_chain import chain  # noqa: E402
 from extract_chain.chain import Stage, run_chain  # noqa: E402
-from extract_chain.fetchers import jina_text_at  # noqa: E402
+from extract_chain.fetchers import is_pdf, jina_text_at  # noqa: E402
 
 NAMES = {
     "brightdata": "Bright Data",
@@ -66,6 +66,8 @@ def as_fetched(provider: str, row: dict | None) -> dict:
         return failed
     doc = {"title": row.get("title") or "", "content": row.get("content") or ""}
     doc["final_url"] = None if provider in NO_FINAL_URL else row.get("final_url")
+    if provider == "brightdata" and is_pdf(doc["content"]):  # A1, D39: as the fetcher
+        return {"error": "Bright Data: PDF file, not text", "code": "pdf"}
     if provider == "jina":  # N12: a warning about the target page in the header block is an error
         warning = _JINA_WARNING.search(jina_head(doc["content"]))
         if warning and int(warning.group(1)) >= 400:

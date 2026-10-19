@@ -20,6 +20,20 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 
 `uv run pytest`: all tests pass without network access, locally (Python 3.14) and in CI (Python 3.11 and 3.14).
 
+## v0.3.2
+
+### T1 – Unit tests
+
+448 tests, ruff clean. New: error headers from the target page with a body (no error, no pause, also through the provider), with an empty or white-space body (error), outer error status with error headers (four cases), unknown zone (`api_400`), raw PDF (fetcher and replay), `bezahlschranke` alone and with a second marker, C4 counted per word.
+
+### T2 – Replay
+
+Default order, both sets: every page as in v0.3.1 (set 1 116 / 8 / 7 / 1, set 2 171 / 8 / 18 / 0). The PDF rule (D39) does not show there, because Jina answers first. With `EXTRACT_CHAIN_ORDER=brightdata,jina,firecrawl,keenable`, set 2: 162 complete / 8 partial / 27 wrong instead of 161 / 7 / 29; the three PDF pages now come from Jina instead of as Bright Data's bytes with a paywall note. Set 1 unchanged in that order (no PDF from Bright Data). `bezahlschranke` (E6) and C4 (per word) change no page in either order.
+
+### Probe of Bright Data (2026-10-19)
+
+Three requests with the benchmark key, header names and Bright Data's error headers only recorded: a page that sends `x-brd-error`, `x-brd-error-code: client_10002` and `x-brd-err-code: client_10020` itself (outer 200, status 200, body 166 characters, the three headers in the JSON field `headers`, D38); an unknown zone (outer 400, `zone "…" not found`, no error headers); a host that does not resolve (outer 200, status 502, empty body, `x-brd-error-code: proxy_error`).
+
 ## v0.3.1
 
 ### T2 – Replay

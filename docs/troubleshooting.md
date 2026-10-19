@@ -52,14 +52,15 @@ Each stage appears as `<stage>=<outcome>`, in order, Keenable last. The outcomes
 | Code | Stage | Meaning | Chain continues? |
 |---|---|---|---|
 | `api_401` | Jina, Bright Data, Firecrawl, Tavily | Key wrong or disabled | yes |
-| `api_400` | Bright Data | Zone unknown, or the URL was refused as invalid | yes |
+| `api_400` | Bright Data | Zone unknown (text `zone "…" not found`), or the URL was refused as invalid; no pause | yes |
 | `api_402` | Jina, Bright Data, Firecrawl, Tavily | Quota or credits used up; the stage pauses for 24 h (K7) | yes |
 | `api_432`, `api_433` | Tavily (only if enabled) | Plan limit or pay-as-you-go limit reached; pause (K7) | yes |
 | `api_429` | Jina, Firecrawl, Tavily | Rate limit; no pause. Jina without a key allows 20 requests per minute | yes |
 | `api_422` | Jina | Seen in tests; meaning not documented | yes |
 | `api_200` | Firecrawl | Firecrawl answered 200 without `success: true` | yes |
 | `api_5xx` | Jina, Bright Data, Firecrawl, Tavily | Provider outage | yes |
-| `brd_<code>` | Bright Data | Unlocker error with Bright Data's code (A1), e.g. `brd_proxy_error` (host not resolvable; also seen for a blocked government site), `brd_client_10110` or `brd_sr_rate_limit` (rate limits, no pause); `brd_client_10020`, `brd_client_10100`, `brd_client_10002` pause the stage (account suspended, zone limit, zone not found) | yes |
+| `brd_<code>` | Bright Data | Unlocker error with Bright Data's code (A1), e.g. `brd_proxy_error` (host not resolvable; also seen for a blocked government site), `brd_client_10110` or `brd_sr_rate_limit` (rate limits, no pause); `brd_client_10020`, `brd_client_10100`, `brd_client_10002` pause the stage (account suspended, zone limit, zone disabled). Read from Bright Data's reply headers, also with an outer error status, and from the JSON field `headers` only when the page body is empty (D38) | yes |
+| `pdf` | Bright Data | Bright Data returned the raw PDF file instead of text (D39); Jina and Firecrawl read PDFs | yes |
 | `brd_unlocker` | Bright Data | Unlocker error without a readable code | yes |
 | `target_<status>` | Jina, Bright Data, Firecrawl | The service reached the site, the site answered with this status (404/410 included since 0.3.1, D36) | yes |
 | `failed` | Tavily (only if enabled) | Tavily listed the URL in `failed_results`; its text is in the error the model sees | yes |

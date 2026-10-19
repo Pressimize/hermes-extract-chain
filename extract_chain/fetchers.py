@@ -51,6 +51,7 @@ TAVILY_TIMEOUT_MAX = 30  # Tavily accepts 1-60 s; 30 s is its default for "advan
 QUOTA_STATUS = frozenset({402})
 TAVILY_QUOTA_STATUS = frozenset({402, 432, 433})  # 432: plan limit, 433: pay-as-you-go limit
 BRIGHTDATA_QUOTA_CODES = frozenset({"client_10020", "client_10100", "client_10002"})  # account, zone limit, zone
+_BRD_ERROR_HEADERS = ("x-brd-error", "x-brd-error-code", "x-brd-err-code")
 
 _JINA_HEAD_END = "Markdown Content:"
 _JINA_HEAD_MAX = 4000  # the header block is short; nothing after this is read as a header
@@ -113,14 +114,33 @@ def _api_error(provider: str, response: httpx.Response, key: str, quota_status: 
     return _error(provider, f"API {status}: {detail}", f"api_{status}", key, **extra)
 
 
+def is_pdf(text: str) -> bool:
+    """A1, D39: Bright Data passes a PDF on as the raw file; its bytes are no page text."""
+    return text.lstrip().startswith("%PDF-")
+
+
+def _brd_error(headers: dict[str, str], key: str, quota: bool = False) -> dict | None:
+    """A1: Bright Data's error headers (names in lower case) as an error, or None without them. quota: the outer
+    status already means a used-up quota (K7)."""
+    if not any(headers.get(h, "").strip() for h in _BRD_ERROR_HEADERS):
+        return None
+    # x-brd-error-code: Unlocker code; x-brd-err-code: code passed on from the proxy network (client_...)
+    codes = [headers.get(h, "").lower() for h in ("x-brd-error-code", "x-brd-err-code")]
+    code = next((c for c in codes if _CODE.fullmatch(c)), "unlocker")
+    text = headers.get("x-brd-error") or headers.get("x-brd-err-msg") or ""
+    extra = {"quota": True} if quota or BRIGHTDATA_QUOTA_CODES & set(codes) else {}
+    return _error("Bright Data", f"{code} {text}".strip(), f"brd_{code}", key, **extra)
+
+
 def _target(provider: str, status: int) -> dict:
     """A failing target page: the page text is dropped, the status is kept in target_status."""
     return _error(provider, f"target HTTP {status}", f"target_{status}", target_status=status)
 
 
 async def brightdata(client: httpx.AsyncClient, url: str, key: str, zone: str, *, deadline: float) -> dict:
-    """N11: Web Unlocker. Unlocker errors arrive with HTTP 200 and x-brd-error in the headers (outside or, with
-    format json, inside the JSON field headers); otherwise status_code is the status of the target page."""
+    """N11, A1: Web Unlocker. Unlocker errors arrive with HTTP 200 and x-brd-error in the headers (outside or, with
+    format json and an empty body, inside the JSON field headers; D38); otherwise status_code is the status of the
+    target page."""
     try:
         response = await _request(
             client,
@@ -130,18 +150,17 @@ async def brightdata(client: httpx.AsyncClient, url: str, key: str, zone: str, *
             json={"zone": zone, "url": url, **BRIGHTDATA_BODY},
             headers={"Authorization": f"Bearer {key}"},
         )
+        outer = {k.lower(): str(v) for k, v in response.headers.items()}
         if response.status_code >= 300:
-            return _api_error("Bright Data", response, key, QUOTA_STATUS)
+            quota = response.status_code in QUOTA_STATUS
+            return _brd_error(outer, key, quota) or _api_error("Bright Data", response, key, QUOTA_STATUS)
         data = _json(response)
+        body = data.get("body")
         inner = data.get("headers") if isinstance(data.get("headers"), dict) else {}
-        headers = {k.lower(): str(v) for k, v in [*response.headers.items(), *inner.items()]}
-        if any(headers.get(h, "").strip() for h in ("x-brd-error", "x-brd-error-code", "x-brd-err-code")):
-            # x-brd-error-code: Unlocker code; x-brd-err-code: code passed on from the proxy network (client_...)
-            codes = [headers.get(h, "").lower() for h in ("x-brd-error-code", "x-brd-err-code")]
-            code = next((c for c in codes if _CODE.fullmatch(c)), "unlocker")
-            text = headers.get("x-brd-error") or headers.get("x-brd-err-msg") or ""
-            extra = {"quota": True} if BRIGHTDATA_QUOTA_CODES & set(codes) else {}
-            return _error("Bright Data", f"{code} {text}".strip(), f"brd_{code}", key, **extra)
+        if isinstance(body, str) and body.strip():  # D38: the target page's own headers are passed on as well
+            inner = {}
+        if failed := _brd_error({**outer, **{k.lower(): str(v) for k, v in inner.items()}}, key):
+            return failed
         if not data:
             return _error("Bright Data", "malformed reply", "malformed")
         status = data.get("status_code")
@@ -149,7 +168,8 @@ async def brightdata(client: httpx.AsyncClient, url: str, key: str, zone: str, *
             status = int(status)
         if isinstance(status, int) and status >= 400:
             return _target("Bright Data", status)
-        body = data.get("body")
+        if isinstance(body, str) and is_pdf(body):
+            return _error("Bright Data", "PDF file, not text", "pdf")
         return {"title": "", "content": body if isinstance(body, str) else "", "final_url": None}
     except Exception as exc:
         return _error("Bright Data", _describe(exc), _describe(exc))
