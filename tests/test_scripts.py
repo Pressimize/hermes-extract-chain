@@ -7,7 +7,7 @@ import live_check
 import pytest
 import replay
 
-from extract_chain import chain
+from extract_chain import chain, fetchers
 
 ARTICLE = "Ein ganz normaler Artikeltext mit mehreren Sätzen. " * 20
 
@@ -20,7 +20,7 @@ def test_as_fetched_without_stored_result():
 
 
 @pytest.mark.parametrize(("code", "status"), [("target_404", 404), ("target_410", 410), ("target_502", 502)])
-def test_as_fetched_target_status_from_the_code(code, status):  # N6: target_status for the 404/410 rule
+def test_as_fetched_target_status_from_the_code(code, status):  # target_status for the log and the reasons
     out = replay.as_fetched("firecrawl", {"error": f"Firecrawl: target HTTP {status}", "code": code})
     assert out == {"error": f"Firecrawl: target HTTP {status}", "code": code, "target_status": status}
 
@@ -55,6 +55,13 @@ def test_as_fetched_jina_warning_line_is_a_target_error():  # N12
 def test_as_fetched_jina_warning_in_the_page_text_does_not_count():  # N12
     text = "Title: x\n\nMarkdown Content:\nWarning: Target URL returned error 404\n" + ARTICLE
     assert replay.as_fetched("jina", {"content": text})["content"] == text
+
+
+def test_as_fetched_jina_text_at_as_the_fetcher():  # E2, D37: lengths without the header lines in the replay too
+    text = "Title: x\n\nMarkdown Content:\n" + ARTICLE
+    assert replay.as_fetched("jina", {"content": text})["text_at"] == fetchers.jina_text_at(text) == 27
+    assert "text_at" not in replay.as_fetched("jina", {"content": ARTICLE})
+    assert "text_at" not in replay.as_fetched("keenable", {"content": text})  # only Jina has header lines
 
 
 def test_replay_names_the_source_stage():  # N23

@@ -14,10 +14,29 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.2.5:** unit tests and stored data (section *v0.2.5: stored data*). Unlike the releases before, the classification changes results.
 - **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 are now killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
 - **v0.3.0:** unit tests; replay on the data of web benchmark v2, two sets (section *v0.3.0*); live check of 20 pages on 2026-10-19.
+- **v0.3.1:** unit tests; replay on the same two sets, compared page by page with v0.3.0 (section *v0.3.1*); no new live check (no change to the requests).
 
 ## T1 – Unit tests
 
 `uv run pytest`: all tests pass without network access, locally (Python 3.14) and in CI (Python 3.11 and 3.14).
+
+## v0.3.1
+
+### T2 – Replay
+
+Same data and method as for v0.3.0 (below), default order.
+
+| Set | Complete | Partial | Wrong | No result |
+|---|---|---|---|---|
+| 1 (132) | **116** | 8 | 7 | 1 |
+| 2 (197) | **171** | 8 | 18 | 0 |
+
+**T2 accepted** (116 and 171 complete, 25 wrong together). Two pages differ from v0.3.0, both through D37 (Jina lengths without the header lines):
+
+- Set 1: Jina returned its header lines only. v0.3.0 took them as a short page and returned them as the longest result (wrong); every other stage failed with 403. v0.3.1 classifies the reply as empty and returns an error with all reasons (no result instead of a wrong one).
+- Set 2: Keenable's copy was 1.54 times as long as Jina's text without the header lines (1.49 times with them), so C5 applied. Firecrawl was suspect for the same reason; Keenable's copy was complete (complete instead of wrong).
+
+No page reached the removed rule K9 in either version. The wait limit (D35) and the interrupt changes (S8) do not show in the replay, which has no timings; the wait was measured on the stored durations (D35). The paywall data of D4 come from the same sets.
 
 ## v0.3.0
 

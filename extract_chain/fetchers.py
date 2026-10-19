@@ -3,8 +3,9 @@
 
 Every function fetches one URL, takes the time it may use (``deadline``, seconds) and never raises. A result is
 ``{"title", "content", "final_url"}`` plus optional ``target_status`` (int, status of the target page) and
-``pdf_pages``. A failure is ``{"error": "<Provider>: <detail>", "code": "<short code>"}``; the code appears in the log
-line (L1). ``target_status`` is set on failures of the target page, ``quota: True`` when the provider's own API
+``pdf_pages``, and for Jina ``text_at`` (where the page text starts after the header lines, E2). A failure is
+``{"error": "<Provider>: <detail>", "code": "<short code>"}``; the code appears in the log line (L1).
+``target_status`` is set on failures of the target page, ``quota: True`` when the provider's own API
 reports a used-up quota or a blocked account (K7: only that starts a pause, never the status of a target page).
 """
 
@@ -113,7 +114,7 @@ def _api_error(provider: str, response: httpx.Response, key: str, quota_status: 
 
 
 def _target(provider: str, status: int) -> dict:
-    """A failing target page: the page text is dropped, the status is kept for N6 (404/410)."""
+    """A failing target page: the page text is dropped, the status is kept in target_status."""
     return _error(provider, f"target HTTP {status}", f"target_{status}", target_status=status)
 
 
@@ -159,6 +160,13 @@ def _jina_head(text: str) -> str:
     return text[:end] if end >= 0 else ""
 
 
+def jina_text_at(text: str) -> int | None:
+    """E2, A7: where the page text starts after Jina's header block, or None without one. Lengths are measured from
+    there; markers are still searched in the whole text."""
+    end = text.find(_JINA_HEAD_END, 0, _JINA_HEAD_MAX)
+    return end + len(_JINA_HEAD_END) if end >= 0 else None
+
+
 async def jina(client: httpx.AsyncClient, url: str, key: str, *, deadline: float) -> dict:
     """N12: Reader. The text keeps the header lines (as measured); only the header block before "Markdown
     Content:" is read: Title, and a Warning about an error status of the target page. URL Source is the requested
@@ -177,7 +185,10 @@ async def jina(client: httpx.AsyncClient, url: str, key: str, *, deadline: float
             if status >= 400:
                 return _target("Jina", status)
         title = _JINA_TITLE.search(head)
-        return {"title": title.group(1).strip() if title else "", "content": text, "final_url": None}
+        doc = {"title": title.group(1).strip() if title else "", "content": text, "final_url": None}
+        if (text_at := jina_text_at(text)) is not None:
+            doc["text_at"] = text_at
+        return doc
     except Exception as exc:
         return _error("Jina", _describe(exc), _describe(exc))
 
