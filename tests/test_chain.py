@@ -11,9 +11,9 @@ from extract_chain import chain
 from extract_chain.chain import (
     NOTE_CHECK,
     NOTE_COPY,
-    NOTE_GONE,
     NOTE_LIVE,
     NOTE_LONGEST,
+    NOTE_LONGEST_COPY,
     NOTE_PAYWALL,
     NOTE_PDF,
     NOTE_REDIRECT,
@@ -271,8 +271,9 @@ def stages(*results, order=("brightdata", "jina", "firecrawl", "tavily")):
 REFERENCE = doc(ARTICLE)  # Keenable's copy as long as ARTICLE: rule N7.5 does not apply
 
 
-def run(stage_list, reference=REFERENCE, *, budget=170.0, clock=None):
-    """reference: Keenable's result (dict), None (no key), an exception, "pending", or a function(loop, future)."""
+def run(stage_list, reference=REFERENCE, *, budget=170.0, clock=None, interrupted=None):
+    """reference: Keenable's result (dict), None (no key), an exception, "pending", or a function(loop, future).
+    interrupted: the interrupt flag check (S8), never set by default."""
 
     async def go():
         loop = asyncio.get_running_loop()
@@ -285,7 +286,9 @@ def run(stage_list, reference=REFERENCE, *, budget=170.0, clock=None):
                 task.set_exception(reference)
             elif callable(reference):
                 reference(loop, task)
-        out = await run_chain(URL, stage_list, task, budget=budget, clock=clock or Clock())
+        out = await run_chain(
+            URL, stage_list, task, budget=budget, clock=clock or Clock(), is_interrupted=interrupted or (lambda: False)
+        )
         assert out["url"] == URL and out["metadata"]["sourceURL"] == URL  # S5
         return out
 
@@ -364,7 +367,15 @@ def test_keenable_suspect_is_checked_without_reference():  # N7: thin, print, ch
     out = run(s, doc("k" * 300))
     reasons = "Bright Data: API 500; Jina: API 500; Firecrawl: API 500; Tavily: API 500"
     reasons += "; Keenable: very short page (300 characters)"
-    assert notes(out) == [NOTE_LONGEST.format(provider="Keenable", n=300, reasons=reasons)]
+    assert notes(out) == [NOTE_LONGEST_COPY.format(provider="Keenable", n=300, reasons=reasons)]  # V15: a copy
+
+
+def test_longest_result_from_tavily_is_a_copy():  # V15: Tavily is a copy as well
+    s, _ = stages(doc("a" * 300), None, None, doc("t" * 400, title="TV"))
+    out = run(s, None)
+    reasons = "Bright Data: very short page (300 characters); Jina: no API key; Firecrawl: no API key; "
+    reasons += "Tavily: very short page (400 characters); Keenable: no API key"
+    assert notes(out) == [NOTE_LONGEST_COPY.format(provider="Tavily", n=400, reasons=reasons)]
 
 
 def test_keenable_paywall_ends_with_copy_note_and_v3():  # N6, V3
@@ -556,69 +567,45 @@ def test_keenable_without_time_left():  # N9: the last stage does not wait beyon
     )
 
 
-# --- N6 404/410 -------------------------------------------------------------------------------------------
+# --- 404/410: an ordinary error (K9 removed in 0.3.1, D36) ----------------------------------------------
 
 
-def test_two_live_404_410_before_firecrawl_end_with_keenables_copy():  # N6, N17a, D-2
-    s, fakes = stages(gone("Bright Data", 404), gone("Jina", 410), doc(ARTICLE), doc(ARTICLE))
-    out = run(s, doc(LONG[:1500], title="KE"))
-    assert out["content"] == NOTE_GONE.format(status=410) + "\n\n" + LONG[:1500] and out["title"] == "KE"
-    assert [f.calls for f in fakes] == [1, 1, 0, 0]
+def test_two_live_404_410_go_on_to_the_later_stages():  # K4, D36
+    s, fakes = stages(gone("Bright Data", 404), gone("Jina", 410), doc(ARTICLE, title="FC"), doc(ARTICLE))
+    out = run(s, doc(ARTICLE))
+    reasons = "Bright Data: target HTTP 404; Jina: target HTTP 410"
+    assert notes(out) == [NOTE_LIVE.format(provider="Firecrawl", reasons=reasons)] and out["title"] == "FC"
+    assert [f.calls for f in fakes] == [1, 1, 1, 0]
 
 
-@pytest.mark.parametrize(
-    ("reference", "tail"),
-    [
-        (err("Keenable", "HTTP 404", "http_404"), "; Keenable: HTTP 404"),
-        (doc(""), "; Keenable: empty page"),
-        (doc(WALL_TEXT), "; Keenable: consent wall"),  # a consent page or bot check is no copy (N17a)
-        (doc(BOT), "; Keenable: bot check page"),
-        (None, ""),  # no key: Keenable was not asked
-    ],
-)
-def test_two_live_404_without_copy_is_an_error(reference, tail):  # N6
-    s, fakes = stages(gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), doc(ARTICLE))
-    out = run(s, reference)
-    assert out["error"] == "Bright Data: target HTTP 404; Jina: target HTTP 404" + tail
-    assert [f.calls for f in fakes] == [1, 1, 0, 0]
-
-
-def test_gone_copy_with_paywall_keeps_v3(caplog):  # N6, N17a, V3
+def test_keenables_copy_after_404s_gets_the_copy_note(caplog):  # K4, V13, D36
     lines = logged(caplog)
-    s, _ = stages(gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE))
-    out = run(s, doc(PAYWALL_TEXT))
-    assert notes(out) == [NOTE_GONE.format(status=404), NOTE_PAYWALL]
-    assert lines() == ["extract-chain news.example: brightdata=target_404 jina=target_404 keenable=gone_copy"]
+    s, fakes = stages(gone("Bright Data", 404), gone("Jina", 404), gone("Firecrawl", 404), err("Tavily", "failed"))
+    out = run(s, doc(ARTICLE, title="KE"))
+    reasons = "Bright Data: target HTTP 404; Jina: target HTTP 404; Firecrawl: target HTTP 404; Tavily: failed"
+    assert out["content"] == NOTE_COPY.format(provider="Keenable", reasons=reasons) + "\n\n" + ARTICLE
+    assert [f.calls for f in fakes] == [1, 1, 1, 1]
+    assert lines() == [
+        "extract-chain news.example: brightdata=target_404 jina=target_404 firecrawl=target_404 tavily=error "
+        "keenable=ok"
+    ]
 
 
-def test_404_need_not_come_from_neighbouring_stages():  # N6: two of the asked live stages
-    order = ("brightdata", "tavily", "jina", "firecrawl")
-    s, fakes = stages(gone("Bright Data", 404), doc("a" * 300), gone("Jina", 404), doc(ARTICLE), order=order)
-    out = run(s, doc(ARTICLE))
-    assert notes(out) == [NOTE_GONE.format(status=404)] and fakes[3].calls == 0
+def test_404s_keep_an_earlier_kept_result():  # K8, D36: before 0.3.1 two 404s discarded it (F8)
+    order = ("tavily", "brightdata", "jina", "firecrawl")
+    s, fakes = stages(doc("a" * 300, title="TV"), gone("Bright Data", 404), gone("Jina", 404), None, order=order)
+    out = run(s, err("Keenable", "HTTP 404", "http_404"))
+    assert out["title"] == "TV" and notes(out)[0].startswith(NOTE_LONGEST_COPY.split("(")[0])
 
 
-def test_one_404_does_not_end_the_chain():  # N6
-    s, fakes = stages(gone("Bright Data", 404), doc(ARTICLE, title="J"))
-    assert run(s, doc(ARTICLE))["title"] == "J"
-
-
-@pytest.mark.parametrize(
-    "first",
-    [doc(error="Firecrawl: target HTTP 404", code="target_404", target_status=404), err("Firecrawl", "API 500")],
-)
-def test_no_early_end_once_firecrawl_was_asked(first):  # N6, D-2: then the chain runs to the end
-    order = ("firecrawl", "brightdata", "jina", "tavily")
-    s, fakes = stages(first, gone("Bright Data", 404), gone("Jina", 410), doc(ARTICLE, title="TV"), order=order)
-    out = run(s, doc(ARTICLE))
-    assert out["title"] == "TV" and [f.calls for f in fakes] == [1, 1, 1, 1]
-
-
-def test_firecrawl_without_key_was_not_asked():  # N6: a skipped stage is no question
-    order = ("firecrawl", "brightdata", "jina", "tavily")
-    s, fakes = stages(None, gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), order=order)
-    out = run(s, doc(ARTICLE))
-    assert notes(out) == [NOTE_GONE.format(status=404)] and fakes[3].calls == 0
+@pytest.mark.parametrize("reference", [err("Keenable", "HTTP 404", "http_404"), None])
+def test_only_404s_end_in_an_error(reference):  # K8 (e)
+    s, fakes = stages(gone("Bright Data", 404), gone("Jina", 410), gone("Firecrawl", 404), None)
+    out = run(s, reference)
+    tail = "Keenable: HTTP 404" if reference else "Keenable: no API key"
+    assert out["error"] == (
+        "Bright Data: target HTTP 404; Jina: target HTTP 410; Firecrawl: target HTTP 404; Tavily: no API key; " + tail
+    )
 
 
 # --- S8 interrupt ----------------------------------------------------------------------------------------
@@ -633,11 +620,152 @@ def test_interrupted_stage_ends_the_chain_without_waiting_for_keenable(caplog): 
     assert lines() == ["extract-chain news.example: brightdata=api_500 jina=interrupted keenable=interrupted"]
 
 
-def test_interrupt_falls_back_to_the_kept_result():  # S8, N8 (a)
+def test_interrupt_falls_back_to_the_kept_result(short_wait):  # S8, N8 (a)
     s, _ = stages(doc("a" * 300), err("Jina", "interrupted", "interrupted"), doc(ARTICLE))
-    out = run(s, err("Keenable", "HTTP 500"))
+    out = run(s, "pending")
     reasons = "Bright Data: very short page (300 characters); Jina: interrupted; Keenable: interrupted"
     assert notes(out) == [NOTE_LONGEST.format(provider="Bright Data", n=300, reasons=reasons)]
+
+
+def test_interrupt_uses_a_copy_that_has_arrived(caplog):  # S8: an arrived copy is the last stage, as usual
+    lines = logged(caplog)
+    s, fakes = stages(doc("a" * 259), err("Jina", "interrupted", "interrupted"), doc(ARTICLE))
+    out = run(s, doc(ARTICLE, title="KE"))
+    reasons = "Bright Data: very short page (259 characters); Jina: interrupted"
+    assert out["content"] == NOTE_COPY.format(provider="Keenable", reasons=reasons) + "\n\n" + ARTICLE
+    assert fakes[2].calls == 0
+    assert lines() == ["extract-chain news.example: brightdata=suspect_thin jina=interrupted keenable=ok"]
+
+
+def test_interrupt_without_keenable_key_logs_no_key(caplog):  # S8, L1: not "interrupted"
+    lines = logged(caplog)
+    s, _ = stages(err("Bright Data", "API 500", "api_500"), err("Jina", "interrupted", "interrupted"))
+    out = run(s, None)
+    assert out["error"] == "Bright Data: API 500; Jina: interrupted; Keenable: no API key"
+    assert lines() == ["extract-chain news.example: brightdata=api_500 jina=interrupted keenable=no_key"]
+
+
+# --- K3, D35: the wait for the reference ------------------------------------------------------------------
+
+
+@pytest.fixture
+def short_wait(monkeypatch):
+    """K3, D35 scaled down: the first stage that looks fine waits 0.2 s instead of 8 s, polling every 0.02 s."""
+    monkeypatch.setattr(chain, "REFERENCE_WAIT", 0.2)
+    monkeypatch.setattr(chain, "POLL", 0.02)
+
+
+def test_reference_wait_is_capped(short_wait):  # K3, D35: a later reference does not count, C5 stays off
+    s, fakes = stages(doc(ARTICLE, title="BD"), doc(LONG))
+    started = time.monotonic()
+    out = run(s, lambda loop, ref: loop.call_later(1.0, ref.set_result, doc(LONG)))
+    assert out["title"] == "BD" and fakes[1].calls == 0
+    assert time.monotonic() - started < 0.9
+
+
+def test_reference_wait_cap_is_eight_seconds():  # K3, D35
+    assert chain.REFERENCE_WAIT == 8.0 and chain.POLL <= 1.0
+
+
+def test_reference_wait_ends_on_interrupt(short_wait, monkeypatch):  # S8: the wait ends at once
+    monkeypatch.setattr(chain, "REFERENCE_WAIT", 5.0)
+    flag = {"set": False}
+    s, fakes = stages(doc(ARTICLE, title="BD"), doc(LONG))
+
+    def reference(loop, ref):
+        loop.call_later(0.05, flag.update, {"set": True})
+
+    started = time.monotonic()
+    out = run(s, reference, interrupted=lambda: flag["set"])
+    assert time.monotonic() - started < 1.0  # not the 5 s of the wait
+    assert out["title"] == "BD" and fakes[1].calls == 0  # no reference, so nothing to compare: the result is taken
+
+
+def test_last_stage_wait_ends_on_interrupt(short_wait, caplog):  # S8: Keenable as the last stage
+    lines = logged(caplog)
+    flag = {"set": False}
+    s, _ = stages(err("Bright Data", "API 500", "api_500"), None, None, None)
+
+    def reference(loop, ref):
+        loop.call_later(0.05, flag.update, {"set": True})
+
+    started = time.monotonic()
+    out = run(s, reference, interrupted=lambda: flag["set"])
+    assert time.monotonic() - started < 1.0
+    assert out["error"].endswith("Tavily: no API key; Keenable: interrupted")
+    assert lines()[0].endswith("keenable=interrupted")
+
+
+def test_reference_wait_is_capped_by_the_time_left(short_wait, monkeypatch):  # K3, Z1: never beyond the budget
+    monkeypatch.setattr(chain, "REFERENCE_WAIT", 5.0)
+    clock = Clock()
+    first = Fake(doc(ARTICLE, title="BD"), then=lambda: setattr(clock, "now", clock.now + 169.9))  # 0.1 s left
+    s, _ = stages(first, doc(LONG))
+    started = time.monotonic()
+    out = run(s, "pending", budget=170.0, clock=clock)
+    assert time.monotonic() - started < 1.0 and out["title"] == "BD"
+
+
+def test_failing_interrupt_check_counts_as_none(short_wait):  # S6
+    s, fakes = stages(doc(ARTICLE[:600], title="BD"), doc(LONG, title="J"))
+
+    def boom():
+        raise RuntimeError("flag")
+
+    out = run(s, lambda loop, ref: loop.call_later(0.05, ref.set_result, doc(LONG)), interrupted=boom)
+    assert out["title"] == "J"  # the reference arrived within the wait and made Bright Data suspect (C5)
+
+
+# --- E2, D37: Jina's header lines do not count towards lengths ------------------------------------------
+
+
+JINA_HEAD = "Title: Some page\nURL Source: https://news.example/artikel\nPublished Time: 2026\n\nMarkdown Content:\n"
+
+
+def jina_doc(body, head=JINA_HEAD):
+    return doc(head + body, text_at=len(head))
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("", "empty"),  # header lines only: empty, not thin
+        ("x" * 19, "empty"),
+        ("x" * 20, "thin"),
+        ("x" * 499, "thin"),  # the header lines would have lifted this above 500
+        ("x" * 500, "ok"),
+    ],
+)
+def test_jina_lengths_without_header_lines(body, expected):  # E2, E8, D37
+    assert classify(jina_doc(body), full_page=True) == expected
+
+
+def test_jina_markers_in_the_header_still_count():  # D37: the title of a bot check says "Just a moment"
+    page = jina_doc("Checking connection, please wait. " * 2, head=JINA_HEAD.replace("Some page", "Just a moment..."))
+    assert classify(page, full_page=True) == "challenge"
+
+
+def test_jina_short_body_is_checked_as_short():  # C1, D37: the reason names the length without header lines
+    s, fakes = stages(jina_doc("a" * 450), doc(ARTICLE, title="BD"), order=("jina", "brightdata"))
+    out = run(s, doc(ARTICLE))
+    assert notes(out) == [NOTE_LIVE.format(provider="Bright Data", reasons="Jina: very short page (450 characters)")]
+
+
+def test_jina_length_against_the_reference_without_header_lines():  # C5, D37
+    body = "w" * 600
+    s, _ = stages(jina_doc(body), doc(ARTICLE, title="BD"), order=("jina", "brightdata"))
+    assert run(s, doc("k" * 900))["title"] == "BD"  # 900 >= 1.5 * 600; with the header lines it would pass
+
+
+@pytest.mark.parametrize(("other", "winner", "n"), [(480, "Bright Data", 480), (400, "Jina", 450)])
+def test_jina_length_in_the_fallback_without_header_lines(other, winner, n):  # K8, V15, D37
+    s, _ = stages(jina_doc("a" * 450), doc("b" * other), order=("jina", "brightdata"))
+    out = run(s, None)
+    assert f"({winner}, {n} characters;" in notes(out)[0]  # with the header lines Jina would have had 540
+
+
+def test_text_at_out_of_range_is_ignored():  # E2: only a position inside the text counts
+    assert classify(doc("x" * 30, text_at=100)) == "thin" and classify(doc("x" * 30, text_at="5")) == "thin"
 
 
 # --- N3, S6 -------------------------------------------------------------------------------------------------
@@ -834,31 +962,18 @@ def test_redirect_url_cut_to_200_characters_and_one_line():  # V10, V1
 # --- gaps found in the review against the spec (2026-10-18) -------------------------------------------
 
 
-@pytest.mark.parametrize("skipped", [err("Firecrawl", "API 402 (paused for another 3 h)", "paused"), "no_time"])
-def test_paused_or_skipped_firecrawl_was_not_asked(skipped):  # N6: only a request that went out counts
+def test_no_time_skips_every_stage_but_keenables_copy():  # Z1: below MIN_STAGE every stage is skipped
     order = ("firecrawl", "brightdata", "jina", "tavily")
-    if skipped == "no_time":
-        clock = Clock()
-        s, fakes = stages(doc(ARTICLE), gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), order=order)
-        out = run(s, doc(ARTICLE, title="KE"), budget=5.0, clock=clock)  # below MIN_STAGE: every stage is skipped
-        assert [f.calls for f in fakes] == [0, 0, 0, 0]
-        assert out["title"] == "KE" and "Firecrawl: no time left" in notes(out)[0]  # Keenable's copy, already there
-        return
-    s, fakes = stages(skipped, gone("Bright Data", 404), gone("Jina", 404), doc(ARTICLE), order=order)
-    out = run(s, doc(ARTICLE))
-    assert notes(out) == [NOTE_GONE.format(status=404)] and fakes[3].calls == 0
+    s, fakes = stages(doc(ARTICLE), doc(ARTICLE), doc(ARTICLE), doc(ARTICLE), order=order)
+    out = run(s, doc(ARTICLE, title="KE"), budget=5.0, clock=Clock())
+    assert [f.calls for f in fakes] == [0, 0, 0, 0]
+    assert out["title"] == "KE" and "Firecrawl: no time left" in notes(out)[0]  # Keenable's copy, already there
 
 
 def test_keenable_loses_a_tie_with_a_live_stage():  # N8 (a): Keenable is the last position
     s, _ = stages(doc("a" * 300, title="BD"), None, None, None)
     out = run(s, doc("k" * 300, title="KE"))
     assert out["title"] == "BD"
-
-
-def test_gone_copy_that_is_thin_is_taken():  # N6, N17a: a short copy still has content
-    s, _ = stages(gone("Bright Data", 404), gone("Jina", 410))
-    out = run(s, doc("k" * 200, title="KE"))
-    assert out["title"] == "KE" and notes(out) == [NOTE_GONE.format(status=410)]
 
 
 def test_keenable_consent_page_is_no_reference():  # N7.5, K3: only an ok or thin copy is a reference
@@ -868,7 +983,7 @@ def test_keenable_consent_page_is_no_reference():  # N7.5, K3: only an ok or thi
     assert out["title"] == "BD" and fakes[1].calls == 0  # the longer consent page does not make Bright Data suspect
 
 
-def test_gone_without_keenable_answer_names_keenable():  # N6: the reasons list Keenable when it did not answer
+def test_keenable_without_answer_is_named():  # N9: the reasons list Keenable when it did not answer
     clock = Clock()
 
     def used_up():

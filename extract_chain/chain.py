@@ -27,6 +27,8 @@ CHECK_BELOW = 3000  # N7.3: JavaScript and bot-check hints count only in texts s
 CONSENT_BELOW = 1500  # N7.4
 CONSENT_MIN = 2  # N7.4: occurrences, not different markers
 REFERENCE_FACTOR = 1.5  # N7.5: Keenable's copy at least this many times longer -> suspect
+REFERENCE_WAIT = 8.0  # K3, D35: the first stage that looks fine waits at most this long for Keenable's copy
+POLL = 1.0  # S8: a wait for Keenable checks the interrupt flag at least this often
 SUSPECT_PRINT = ["dieser ausdruck wurde am", "ausdruck erstellt"]
 SUSPECT_JS = [
     "turn on javascript", "enable javascript", r"javascript (is )?(disabled|required)", "aktivieren sie javascript",
@@ -41,8 +43,6 @@ SUSPECT_CONSENT = r"cookie|consent|zustimm|einwillig"
 # N9: time budget of one URL; a stage with less time left is skipped.
 URL_BUDGET_MAX = 170.0
 MIN_STAGE = 10.0
-GONE_STATUS = frozenset({404, 410})  # N6: two live stages agree that the page is gone
-GONE_MIN = 2
 COPY_STAGES = frozenset({"tavily", "keenable"})  # N17: copies that may be older than the live page
 
 # E6: marker lists from the chain test prototype (2026-10-09).
@@ -72,9 +72,12 @@ CHALLENGE = [
 
 NOTE_LIVE = "[extract-chain] Live fetch via {provider} ({reasons})."
 NOTE_COPY = "[extract-chain] Copy via {provider}; it may be older than the live page ({reasons})."
-NOTE_GONE = "[extract-chain] The live page returned HTTP {status}; this is an older copy from Keenable's index."
 NOTE_LONGEST = (
     "[extract-chain] No source passed the checks; this is the longest result ({provider}, {n} characters; {reasons})."
+)
+NOTE_LONGEST_COPY = (
+    "[extract-chain] No source passed the checks; this is the longest result, a copy that may be older than the live "
+    "page ({provider}, {n} characters; {reasons})."
 )
 NOTE_REDIRECT = "[extract-chain] The site redirected to {final}; the text below is from that page."
 NOTE_CHECK = (
@@ -128,15 +131,25 @@ def _visible(doc: dict) -> str:
     return _TAGS.sub("", doc.get("content") or "").strip()
 
 
+def _length(doc: dict) -> int:
+    """E2: length of the visible text; for Jina from where the page text starts, without the header lines (D37)."""
+    content = doc.get("content") or ""
+    at = doc.get("text_at")
+    if isinstance(at, int) and 0 < at <= len(content):
+        content = content[at:]
+    return len(_TAGS.sub("", content).strip())
+
+
 def classify(doc: dict, full_page: bool = False) -> str:
     """E1-E8: 'error', 'empty', 'challenge', 'wall', 'paywall', 'thin' or 'ok'. full_page: whole page."""
     if doc.get("error"):
         return "error"
     text = doc.get("content") or ""
-    visible = _visible(doc)
-    if len(visible) < EMPTY_BELOW:
+    visible = _visible(doc)  # markers: the whole text; lengths: _length (D37)
+    n = _length(doc)
+    if n < EMPTY_BELOW:
         return "empty"
-    if len(visible) < CHALLENGE_BELOW and _hits(_CHALLENGE_RX, visible):
+    if n < CHALLENGE_BELOW and _hits(_CHALLENGE_RX, visible):
         return "challenge"
     short = len(text) < WHOLE_BELOW
     if _hits(_WALL_RX, text if short else text[:WALL_WINDOW]) >= 2:
@@ -144,14 +157,14 @@ def classify(doc: dict, full_page: bool = False) -> str:
     area = text if short or not full_page else text[: int(len(text) * FULL_PAGE_PAYWALL_SHARE)]
     if _hits(_PAYWALL_DEFINITE_RX, area) or _hits(_PAYWALL_RX, area) >= 2:
         return "paywall"
-    return "thin" if len(visible) < THIN_BELOW else "ok"
+    return "thin" if n < THIN_BELOW else "ok"
 
 
 def suspect(doc: dict, reference_len: int | None) -> str | None:
     """N7: why a result that classify() calls ok or thin is not taken yet, or None. The first rule that applies
     wins. reference_len: visible length of Keenable's copy, None without one (and for Keenable itself)."""
-    visible = _visible(doc)
-    n = len(visible)
+    visible = _visible(doc)  # markers: the whole text; lengths: _length (D37)
+    n = _length(doc)
     if n < THIN_BELOW:
         return "thin"
     if _hits(_PRINT_RX, visible[:PRINT_WINDOW]):
@@ -213,7 +226,7 @@ def _host(url: str) -> str:
 def _reason(provider: str, doc: dict, kind: str) -> str:
     """Why a stage was passed over: its error, its class (E2-E8) or the check that applied (N7, N17)."""
     if kind == "thin":
-        return f"{provider}: very short page ({len(_visible(doc))} characters)"
+        return f"{provider}: very short page ({_length(doc)} characters)"
     if kind in _SUSPECT_TEXT:
         return f"{provider}: {_SUSPECT_TEXT[kind]}"
     return doc["error"] if kind == "error" else f"{provider}: {_KIND_TEXT[kind]}"
@@ -241,17 +254,17 @@ async def run_chain(
     *,
     budget: float,
     clock: Callable[[], float] = time.monotonic,
+    is_interrupted: Callable[[], bool] = lambda: False,
 ) -> dict:
     """N5-N9 for one URL. stages: the live stages and Tavily in order; reference: the running Keenable request, which
-    is the reference for N7.5 and the last stage. Returns the Hermes result entry. Never raises (S6)."""
+    is the reference for N7.5 and the last stage; is_interrupted: Hermes' interrupt flag (S8). Returns the Hermes
+    result entry. Never raises (S6)."""
     start = clock()
     steps: list[str] = []
     reasons: list[str] = []
     kept: list[tuple[bool, int, int, str, str, dict]] = []  # (no check hint, length, -position, id, name, doc)
     wall: dict | None = None
     check: dict | None = None
-    gone: list[int] = []
-    firecrawl_asked = False
     reference_len: int | None = None
     waited = False
     interrupted = False
@@ -259,12 +272,24 @@ async def run_chain(
     def left() -> float:
         return budget - (clock() - start)
 
+    def stop() -> bool:
+        try:
+            return bool(is_interrupted())
+        except Exception:  # S6: a failing flag check counts as no interrupt
+            return False
+
     async def keenable_doc(wait: float) -> dict | None:
-        """The Keenable result, waiting at most wait seconds; None without a request or when it is not ready."""
+        """The Keenable result, waiting at most wait seconds and ending the wait on an interrupt (S8); None without a
+        request or when it is not ready."""
         if reference is None:
             return None
-        if not reference.done() and wait > 0:
-            await asyncio.wait({reference}, timeout=wait)
+        loop = asyncio.get_running_loop()
+        end = loop.time() + wait
+        while not reference.done():  # a copy that has arrived is used even when the flag is set (S8)
+            rest = end - loop.time()
+            if rest <= 0 or stop():
+                break
+            await asyncio.wait({reference}, timeout=min(POLL, rest))
         if not reference.done() or reference.cancelled():
             return None
         try:
@@ -280,8 +305,7 @@ async def run_chain(
                 doc = {"error": f"{stage.name}: no time left", "code": "no_time"}
             else:
                 doc = await _call(stage.name, stage.fetch, remaining)
-                firecrawl_asked |= stage.id == "firecrawl" and doc.get("code") not in ("paused", "interrupted")
-            if doc.get("code") == "interrupted":  # S8, N5: skip the rest and do not wait for Keenable
+            if doc.get("code") == "interrupted":  # S8, N5: skip the rest; Keenable only if its copy has arrived
                 steps.append(f"{stage.id}=interrupted")
                 reasons.append(doc["error"])
                 interrupted = True
@@ -297,45 +321,29 @@ async def run_chain(
                     wall = doc
                 if kind == "challenge" and check is None:
                     check = doc
-                if doc.get("target_status") in GONE_STATUS:
-                    gone.append(doc["target_status"])
-                if len(gone) >= GONE_MIN and not firecrawl_asked:  # N6: the page is gone; no further live request
-                    copy = await keenable_doc(left())
-                    copy_kind = classify(copy) if copy is not None else ""
-                    if copy_kind in ("ok", "thin", "paywall"):  # a consent page or bot check is no copy (N17a)
-                        steps.append("keenable=gone_copy")
-                        notes = [NOTE_GONE.format(status=gone[-1])] + ([NOTE_PAYWALL] if copy_kind == "paywall" else [])
-                        return _result(url, copy, *notes)
-                    if copy is not None:
-                        steps.append(f"keenable={copy.get('code') or classify(copy)}")
-                        reasons.append(_reason("Keenable", copy, classify(copy)))
-                    elif reference is not None:  # Keenable did not answer within the time left
-                        steps.append("keenable=no_time")
-                        reasons.append("Keenable: no time left")
-                    return failure(url, "; ".join(reasons))
-                continue
+                continue  # no error ends the chain (K4; K9 removed in 0.3.1, D36)
             if not waited:  # N9: the reference is needed now; later stages do not wait again
                 waited = True
-                ref = await keenable_doc(left())
+                ref = await keenable_doc(min(REFERENCE_WAIT, left()))  # K3, D35
                 # only a real copy is a reference; a consent page or bot check of Keenable is none (second opinion)
                 usable = ref is not None and classify(ref) in ("ok", "thin")
-                reference_len = len(_visible(ref)) if usable else None
+                reference_len = _length(ref) if usable else None
             rule = suspect(doc, reference_len)
             if rule is None:
                 steps.append(f"{stage.id}={kind}")
                 return _result(url, doc, *_source(stage.id, stage.name, reasons))
             steps.append(f"{stage.id}=suspect_{rule}")
-            kept.append((rule != "check", len(_visible(doc)), -position, stage.id, stage.name, doc))
+            kept.append((rule != "check", _length(doc), -position, stage.id, stage.name, doc))
             reasons.append(_reason(stage.name, doc, rule))
 
         # N5: Keenable is the last stage; its request has been running since the start.
-        if interrupted:  # the provider cancels the Keenable request
-            doc = {"error": "Keenable: interrupted", "code": "interrupted"}
-        elif reference is None:
+        if reference is None:
             doc = {"error": "Keenable: no API key", "code": "no_key"}
-        else:
-            doc = await keenable_doc(left())
-            if doc is None:
+        else:  # after an interrupt only a copy that has arrived; the provider cancels the request otherwise (S8)
+            doc = await keenable_doc(0 if interrupted else left())
+            if doc is None and (interrupted or stop()):
+                doc = {"error": "Keenable: interrupted", "code": "interrupted"}
+            elif doc is None:
                 doc = {"error": "Keenable: no time left", "code": "no_time"}
         kind = classify(doc)
         if kind == "paywall":
@@ -347,7 +355,7 @@ async def run_chain(
                 steps.append(f"keenable={kind}")
                 return _result(url, doc, *_source("keenable", "Keenable", reasons))
             steps.append(f"keenable=suspect_{rule}")
-            kept.append((rule != "check", len(_visible(doc)), -len(stages), "keenable", "Keenable", doc))
+            kept.append((rule != "check", _length(doc), -len(stages), "keenable", "Keenable", doc))
             reasons.append(_reason("Keenable", doc, rule))
         else:  # a Keenable wall or bot-check page is never kept, as before (K4)
             steps.append(f"keenable={doc.get('code') or kind}")
@@ -356,8 +364,9 @@ async def run_chain(
         # N8: no stage passed the checks
         plain = [k for k in kept if k[0]]
         if plain:
-            _, n, _, _, name, doc = max(plain, key=lambda k: (k[1], k[2]))
-            return _result(url, doc, NOTE_LONGEST.format(provider=name, n=n, reasons="; ".join(reasons)))
+            _, n, _, sid, name, doc = max(plain, key=lambda k: (k[1], k[2]))
+            note = NOTE_LONGEST_COPY if sid in COPY_STAGES else NOTE_LONGEST  # V15: a copy may be older
+            return _result(url, doc, note.format(provider=name, n=n, reasons="; ".join(reasons)))
         if kept:  # only results with a bot-check or JavaScript hint
             doc = max(kept, key=lambda k: (k[1], k[2]))[5]
             return _result(url, doc, NOTE_CHECK.format(reasons="; ".join(reasons)))

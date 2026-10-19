@@ -8,7 +8,7 @@ How failures show up, what the log line means, typical problems with their fixes
 |---|---|
 | The tool result the model sees | Per URL either content (possibly with `[extract-chain]` notes at the top) or an `error` listing the reason of every stage, e.g. `Jina: target HTTP 403; Bright Data: target HTTP 403; Firecrawl: target HTTP 403; Keenable: Gateway timeout` |
 | `logs/agent.log` in the Hermes home (INFO) | One line per URL: `extract-chain <host>: jina=… brightdata=… firecrawl=… keenable=…` (L1; `tavily=…` appears only if Tavily is in the order) |
-| `logs/errors.log` (WARNING) | Plugin load failures, the website-policy import warning, the plugin's `chain failed` warning, the start of a pause (`… paused for <seconds> s`), an invalid `EXTRACT_CHAIN_ORDER`, a `web.extract_timeout` below 120 s, Hermes' extract timeouts |
+| `logs/errors.log` (WARNING) | Plugin load failures, the website-policy import warning, the plugin's `chain failed` warning, the start of a pause (`… paused for <seconds> s`), an invalid `EXTRACT_CHAIN_ORDER`, a `web.extract_timeout` below 180 s, Hermes' extract timeouts |
 | `hermes plugins list` | Whether `extract-chain` is enabled and loaded, or why it failed to load |
 
 Count how often each stage was needed and how it ended, e.g. to watch credits:
@@ -61,7 +61,7 @@ Each stage appears as `<stage>=<outcome>`, in order, Keenable last. The outcomes
 | `api_5xx` | Jina, Bright Data, Firecrawl, Tavily | Provider outage | yes |
 | `brd_<code>` | Bright Data | Unlocker error with Bright Data's code (A1), e.g. `brd_proxy_error` (host not resolvable; also seen for a blocked government site), `brd_client_10110` or `brd_sr_rate_limit` (rate limits, no pause); `brd_client_10020`, `brd_client_10100`, `brd_client_10002` pause the stage (account suspended, zone limit, zone not found) | yes |
 | `brd_unlocker` | Bright Data | Unlocker error without a readable code | yes |
-| `target_<status>` | Jina, Bright Data, Firecrawl | The service reached the site, the site answered with this status. Two `target_404`/`target_410` before Firecrawl was asked end the live stages (K9) | yes, except K9 |
+| `target_<status>` | Jina, Bright Data, Firecrawl | The service reached the site, the site answered with this status (404/410 included since 0.3.1, D36) | yes |
 | `failed` | Tavily (only if enabled) | Tavily listed the URL in `failed_results`; its text is in the error the model sees | yes |
 | `no_result` | Tavily (only if enabled) | Tavily's reply named no result | yes |
 | `http_<status>` | Keenable | Keenable could not provide the page; the error text carries its message, e.g. *The page is behind a login or paywall* (`Unprocessable entity`), *The target page took too long to respond* (`Gateway timeout`), *The target server denied access to this URL* (`Upstream forbidden`). `http_402` pauses Keenable (K7) | last stage |
@@ -72,7 +72,7 @@ Each stage appears as `<stage>=<outcome>`, in order, Keenable last. The outcomes
 | `no_key` | any | Key not set; for Bright Data also a missing zone (`Bright Data: no zone`) | stage skipped |
 | `no_time` | any | Less than 10 s of the URL's budget left (Z1); for Keenable: its copy was not ready in the time left | stage skipped |
 | `paused` | any | The provider's API reported a used-up quota earlier; no request until the pause ends (K7) | stage skipped |
-| `interrupted` | any | The user stopped the turn (S8) | stage skipped |
+| `interrupted` | any | The user stopped the turn (S8); for Keenable only when its copy had not arrived yet | stage skipped |
 
 **Keenable only, when the URL ended before its turn (K3):**
 
@@ -80,7 +80,6 @@ Each stage appears as `<stage>=<outcome>`, in order, Keenable last. The outcomes
 |---|---|
 | `ref_<outcome>` | Its reference copy had arrived; the outcome is its class or error code, e.g. `ref_ok`, `ref_http_422` |
 | `pending` | Its request was still running and was cancelled |
-| `gone_copy` | Two live stages reported 404/410, and Keenable's copy was returned (K9, V14) |
 
 ## Typical problems
 
@@ -164,14 +163,14 @@ The counts per stage in the log show which sites cause it.
 | Redirect to a blocked site | The result is replaced by Hermes' policy block entry (S7). |
 | Website blocklist | Checked before any request; blocked URLs reach no provider. |
 | Consent wall everywhere | The first consent page comes back with the wall note listing all reasons, unless a suspect result was kept (K8). Hermes caches it like any success. |
-| Page gone (404/410) | Two live stages with 404 or 410 before Firecrawl was asked end the live stages; Keenable's copy comes back with V14, or the error lists the reasons (K9). After Firecrawl the chain runs to its end. |
+| Page gone (404/410) | An error like any other: the chain asks the remaining stages, Keenable included, and a copy comes back with the copy note, whose reasons name the 404s (D36). |
 | Firecrawl returns an empty `<body></body>` | Treated as empty; moves on. |
 | Long PDF via Firecrawl | Firecrawl reads the first 30 pages; the note says *PDF cut to the first 30 of N pages*. Jina, Bright Data and Tavily (if enabled) read PDFs without a cap. |
 | Page that loads with status 200 but shows "Access denied" or a challenge text | Recognised as a bot-check page if it is shorter than 1,500 visible characters and contains a phrase of the list (E7), or as suspect below 3,000 characters (C3); the chain moves on. If no stage has the page, it comes back with the note V11. |
 | URL with a fragment (`#…`) | Jina does not receive the fragment; pages that route by fragment may come back as the start page. |
 | No key at all | The provider reports itself unavailable, and Hermes hides `web_extract` unless another web backend is available. Jina alone does not make it available (S2). |
 | Missing key of one stage | That stage is skipped (`no_key`). |
-| User stops the turn | No further requests; remaining stages report `interrupted` (S8). |
+| User stops the turn | No further requests; remaining stages report `interrupted`, and a wait for Keenable ends within a second. A Keenable copy that has already arrived is still used (S8). |
 | Hermes timeout | All URLs of the call fail, also those that had finished (Hermes discards the whole call). |
 
 Paywalls (detected or not, English ones), the Hermes cache and privacy: [design.md, section 13](design.md#13-known-limitations).

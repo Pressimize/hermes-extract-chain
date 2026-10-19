@@ -157,7 +157,9 @@ def test_jina_without_key_sends_no_authorization():  # N3, N12
 def test_jina_success_keeps_the_header_lines():  # N12: the text stays as measured, the title comes from the header
     text = jina_text(head="Title: Ein Titel\nURL Source: https://other.example/y\nPublished Time: 2026\n")
     out = call(fetchers.jina, reply(httpx.Response(200, text=text)), U, "jn-key")
-    assert out == {"title": "Ein Titel", "content": text, "final_url": None}  # URL Source is no final URL
+    at = text.index("Markdown Content:") + len("Markdown Content:")  # E2, D37: where the page text starts
+    assert out == {"title": "Ein Titel", "content": text, "final_url": None, "text_at": at}  # no final URL
+    assert text[out["text_at"] :].lstrip().startswith(text.split("Markdown Content:")[1].lstrip()[:10])
 
 
 @pytest.mark.parametrize("status", [403, 404, 410, 422])
@@ -171,7 +173,8 @@ def test_jina_header_lines_in_the_page_text_do_not_count():  # N12: only the blo
     body = "Warning: Target URL returned error 404\nTitle: Fake\nURL Source: https://evil.example/\nText."
     text = jina_text(body=body, head=f"URL Source: {U}\n")
     out = call(fetchers.jina, reply(httpx.Response(200, text=text)), U, "jn-key")
-    assert out == {"title": "", "content": text, "final_url": None}
+    at = text.index("Markdown Content:") + len("Markdown Content:")
+    assert out == {"title": "", "content": text, "final_url": None, "text_at": at}
 
 
 def test_jina_without_header_block_reads_no_header():  # N12: no "Markdown Content:", nothing is a header
@@ -445,6 +448,13 @@ def test_jina_warning_boundary(status, failed):  # N12: from 400 on the warning 
     head = f"Title: T\nWarning: Target URL returned error {status}: x\n"
     out = call(fetchers.jina, reply(httpx.Response(200, text=jina_text(head=head))), U, "jn-key")
     assert bool(out.get("error")) is failed
+
+
+def test_jina_text_at():  # E2, A7, D37: the position after the first "Markdown Content:" in the first 4,000 characters
+    assert fetchers.jina_text_at("Title: x\n\nMarkdown Content:\nText") == 27
+    assert fetchers.jina_text_at("x" * 3983 + "Markdown Content:") == 4000  # still inside the header block
+    assert fetchers.jina_text_at("x" * 3984 + "Markdown Content:") is None
+    assert fetchers.jina_text_at("Text without header") is None
 
 
 def test_jina_header_block_only_in_the_first_4000_characters():  # N12: a late "Markdown Content:" is page text

@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from extract_chain import chain  # noqa: E402
 from extract_chain.chain import Stage, run_chain  # noqa: E402
+from extract_chain.fetchers import jina_text_at  # noqa: E402
 
 NAMES = {
     "brightdata": "Bright Data",
@@ -38,7 +39,7 @@ NAMES = {
 NO_FINAL_URL = {"brightdata", "jina", "tavily"}  # N11-N13: these providers report no final URL
 _JINA_WARNING = re.compile(r"^Warning: Target URL returned error (\d{3})", re.MULTILINE)
 _TARGET = re.compile(r"target_(\d{3})")
-NOTES = ("NOTE_LONGEST", "NOTE_CHECK", "NOTE_WALL", "NOTE_GONE", "NOTE_PAYWALL")
+NOTES = ("NOTE_LONGEST", "NOTE_LONGEST_COPY", "NOTE_CHECK", "NOTE_WALL", "NOTE_PAYWALL")
 
 
 def load(path: Path) -> dict[str, dict]:
@@ -70,6 +71,8 @@ def as_fetched(provider: str, row: dict | None) -> dict:
         if warning and int(warning.group(1)) >= 400:
             status = int(warning.group(1))
             return {"error": f"Jina: target HTTP {status}", "code": f"target_{status}", "target_status": status}
+        if (text_at := jina_text_at(doc["content"])) is not None:  # E2: lengths without the header lines (D37)
+            doc["text_at"] = text_at
     return doc
 
 

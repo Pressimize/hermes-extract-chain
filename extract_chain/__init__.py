@@ -1,4 +1,4 @@
-"""Hermes plugin: web_extract fallback chain Bright Data -> Jina -> Firecrawl -> Tavily -> Keenable."""
+"""Hermes plugin: web_extract fallback chain Jina -> Bright Data -> Firecrawl -> Keenable, Tavily optional."""
 
 
 def register(ctx) -> None:

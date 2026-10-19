@@ -42,7 +42,7 @@ ZONE_ENV = "BRIGHTDATA_UNLOCKER_ZONE"
 DAY = 86400  # K7: a used-up quota pauses a stage for 24 hours
 BUDGET_MARGIN = 10.0  # N9: the URL budget stays this far below web.extract_timeout
 BUDGET_FALLBACK = 110.0  # N9: Hermes' default of 120 s minus the margin, when the setting cannot be read
-TIMEOUT_LOW = 120.0  # N9: below this, a warning once per process
+TIMEOUT_LOW = 180.0  # Z1, L3: below this, a warning once per process (I2 recommends 180 s)
 log = logging.getLogger(__name__)
 
 # S7: Hermes applies its website blocklist inside each provider, not centrally, so the plugin calls it itself.
@@ -110,7 +110,7 @@ def url_budget() -> float:
 
 
 def _slot(provider: str, key: str) -> tuple[str, str]:
-    """K7: the pause table is keyed by a digest of the API key, so it holds no key."""
+    """K7: the pause table is keyed by a digest of the API key (Bright Data: key and zone), so it holds no key."""
     return provider, hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()
 
 
@@ -150,7 +150,7 @@ class ExtractChainProvider(WebSearchProvider):
         self._transport = transport  # tests only; Hermes instantiates without arguments
         self._clock = clock  # wall clock for pauses (K7)
         self._monotonic = monotonic  # time budget of a URL (N9)
-        self._paused: dict[tuple[str, str], tuple[float, str]] = {}  # K7: _slot(provider, key) -> (until, reason)
+        self._paused: dict[tuple[str, str], tuple[float, str]] = {}  # K7: _slot(provider, ...) -> (until, reason)
 
     @property
     def name(self) -> str:
@@ -230,7 +230,9 @@ class ExtractChainProvider(WebSearchProvider):
             needs_key = sid != "jina"
             missing = "no zone" if sid == "brightdata" and keys[sid] and not zone else "no API key"
             runnable = (not needs_key or keys[sid]) and not (sid == "brightdata" and not zone)
-            fetch = self._stage(NAMES[sid], calls[sid], keys[sid], caps[sid]) if runnable else None
+            # K7: a Bright Data pause belongs to key and zone, so a corrected zone is used at once
+            pause_id = keys[sid] + "\0" + zone if sid == "brightdata" else keys[sid]
+            fetch = self._stage(NAMES[sid], calls[sid], pause_id, caps[sid]) if runnable else None
             stages.append(Stage(sid, NAMES[sid], fetch, missing=missing))
         reference = None
         if keys["keenable"]:
@@ -238,7 +240,8 @@ class ExtractChainProvider(WebSearchProvider):
                              fetchers.KEENABLE_DEADLINE)  # fmt: skip
             reference = asyncio.ensure_future(_guarded(ke, min(fetchers.KEENABLE_DEADLINE, budget)))
         try:
-            return await run_chain(url, stages, reference, budget=budget, clock=self._monotonic)
+            return await run_chain(url, stages, reference, budget=budget, clock=self._monotonic,
+                                   is_interrupted=lambda: is_interrupted())  # fmt: skip
         finally:
             if reference is not None and not reference.done():
                 reference.cancel()

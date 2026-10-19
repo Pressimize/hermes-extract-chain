@@ -128,7 +128,7 @@ def test_manifest_and_register():  # S1, N4
 
 def test_version_is_the_same_in_both_files():  # N21, P1
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    assert manifest()["version"] == project["version"] == "0.3.0"
+    assert manifest()["version"] == project["version"] == "0.3.1"
 
 
 def test_display_name_names_the_chain():  # N1
@@ -236,7 +236,7 @@ def test_url_budget_without_limit_in_hermes(web_config, value):  # N9: 0 or belo
     assert provider.url_budget() == 170.0
 
 
-def test_url_budget_below_120_warns_once(web_config, caplog):  # N9
+def test_url_budget_below_180_warns_once(web_config, caplog):  # Z1, L3
     web_config["config"] = {"extract_timeout": 100}
     assert provider.url_budget() == 90.0
     provider.url_budget()
@@ -245,9 +245,12 @@ def test_url_budget_below_120_warns_once(web_config, caplog):  # N9
     ]
 
 
-def test_url_budget_default_setting(web_config):  # N9: Hermes' default of 120 s
+def test_url_budget_default_setting(web_config, caplog):  # N9: Hermes' default of 120 s, which warns (L3)
     web_config["config"] = {}
     assert provider.url_budget() == 110.0
+    assert [r.getMessage() for r in caplog.records] == [
+        "extract-chain: web.extract_timeout is 120 s; 180 s are recommended"
+    ]
 
 
 @pytest.mark.parametrize("config", [RuntimeError("broken yaml"), {"extract_timeout": "abc"}, None])
@@ -550,11 +553,40 @@ def test_interrupt_between_stages_skips_the_live_stages(env, monkeypatch, caplog
         monkeypatch.setattr(provider, "is_interrupted", lambda: True)
         return httpx.Response(500)
 
-    api = Api(brightdata=brightdata_then_interrupt)
+    api = Api(brightdata=brightdata_then_interrupt, keenable=slow_keenable({}, 1.0))  # still running
     out = extract(api, [URL])
     assert api.asked() == ["brightdata"]
     assert out[0]["error"] == "Bright Data: API 500: HTTP 500; Jina: interrupted; Keenable: interrupted"
     assert lines() == ["extract-chain a.example: brightdata=api_500 jina=interrupted keenable=interrupted"]
+
+
+def test_interrupt_takes_a_keenable_copy_that_has_arrived(env, monkeypatch, caplog):  # S8
+    lines = chain_lines(caplog)
+
+    def brightdata_then_interrupt(request):
+        monkeypatch.setattr(provider, "is_interrupted", lambda: True)
+        return httpx.Response(500)
+
+    api = Api(brightdata=after_a_moment(brightdata_then_interrupt), keenable=ke_ok())  # Keenable answers first
+    out = extract(api, [URL])
+    assert out[0]["error"] is None and out[0]["content"].endswith("\n\n" + ARTICLE)
+    assert lines() == ["extract-chain a.example: brightdata=api_500 jina=interrupted keenable=ok"]
+
+
+def test_interrupt_ends_the_wait_for_keenable(env, monkeypatch):  # S8, K3: the wait checks the flag
+    flag = {"set": False}
+    monkeypatch.setattr(provider, "is_interrupted", lambda: flag["set"])
+    monkeypatch.setattr(chain, "POLL", 0.02)
+
+    async def brightdata_ok_then_interrupt(request):
+        asyncio.get_running_loop().call_later(0.05, flag.update, {"set": True})
+        return bd_ok()(request)
+
+    start = time.monotonic()
+    api = Api(brightdata=brightdata_ok_then_interrupt, keenable=slow_keenable({}, 3.0))
+    out = extract(api, [URL])
+    assert time.monotonic() - start < 1.0  # not the 3 s of Keenable, not the 8 s of the wait
+    assert out[0]["content"] == ARTICLE  # the first stage's result is taken without a reference
 
 
 def test_interrupt_between_stages_cancels_the_running_keenable_task(env, monkeypatch):  # N5, S8
@@ -673,6 +705,39 @@ def test_pause_per_key(env):  # K7: another key (profile, or a corrected one) is
     assert "keenable" not in asked and out["error"].endswith("Keenable: HTTP 402 (paused for another 24 h)")
     env["KEENABLE_API_KEY"] = "ke-OTHER-KEY"
     assert "keenable" in call()[1]
+
+
+def test_brightdata_pause_per_zone(env):  # K7: a corrected zone is used at once (zone typo: client_10002)
+    zone_gone = bd_ok("", 502, {"x-brd-error": "zone not found", "x-brd-error-code": "client_10002"})
+    call = calls(Api(brightdata=zone_gone), Clock(NOON))
+    call()
+    out, asked = call()
+    assert "brightdata" not in asked and "(paused for another 24 h)" in out["error"]
+    env["BRIGHTDATA_UNLOCKER_ZONE"] = "unlocker2"
+    assert "brightdata" in call()[1]
+    env["BRIGHTDATA_UNLOCKER_ZONE"] = "unlocker1"  # the old zone stays paused
+    assert "brightdata" not in call()[1]
+
+
+@pytest.mark.parametrize(
+    ("timeout", "brightdata", "firecrawl_ms"),
+    [(180, 90.0, 35_000), (60, 50.0, 35_000), (40, 30.0, 25_000)],
+)
+def test_stage_deadline_is_capped(env, web_config, monkeypatch, timeout, brightdata, firecrawl_ms):  # A0, Z1
+    web_config["config"] = {"extract_timeout": timeout}
+    got = {}
+
+    async def brightdata_spy(client, url, key, zone, *, deadline):
+        got["brightdata"] = deadline
+        return {"error": "Bright Data: API 500", "code": "api_500"}
+
+    monkeypatch.setattr(provider.fetchers, "brightdata", brightdata_spy)
+    env["EXTRACT_CHAIN_ORDER"] = "brightdata,firecrawl"
+    api = Api(firecrawl=lambda r: httpx.Response(500), keenable=down)
+    extract(api, [URL])
+    assert got["brightdata"] == pytest.approx(brightdata, abs=0.5)  # min(90 s, budget)
+    request = next(r for r in api.requests if HOSTS[r.url.host] == "firecrawl")
+    assert json.loads(request.content)["timeout"] == pytest.approx(firecrawl_ms, abs=500)  # min(40 s, left) - 5 s
 
 
 def test_pause_is_dropped_when_the_clock_was_set_back(env):  # K7
@@ -815,8 +880,8 @@ def test_repeated_keenable_warns(caplog):  # N2: a duplicate is a duplicate, Kee
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
 
 
-@pytest.mark.parametrize(("value", "warned"), [(119, True), (120, False)])
-def test_url_budget_warning_boundary(web_config, caplog, value, warned):  # N9: a warning below 120 s
+@pytest.mark.parametrize(("value", "warned"), [(179, True), (180, False), (0, False)])
+def test_url_budget_warning_boundary(web_config, caplog, value, warned):  # Z1, L3: a warning below 180 s
     web_config["config"] = {"extract_timeout": value}
     provider.url_budget()
     assert bool([r for r in caplog.records if r.levelno == logging.WARNING]) is warned

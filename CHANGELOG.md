@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.1 – 2026-10-19
+
+Fixes from a review of 0.3.0 by nine models, each finding checked against the code and the benchmark data. No change to the keys, the configuration or the default order.
+
+**Changed behaviour**
+
+- Two 404/410 answers no longer end the chain (K9 removed, D36). A page that two services report gone now goes through the remaining stages like after any other error; Keenable's copy comes back with the usual copy note, whose reasons name the 404s. The note `The live page returned HTTP <status>; …` (V14) and the log entry `gone_copy` are gone. K9 saved Firecrawl credits, but two 404/410 answers never occurred in the benchmarks, and it could discard a result already kept or skip Tavily.
+- A Bright Data pause belongs to the key **and the zone** (K7). Before, a typo in `BRIGHTDATA_UNLOCKER_ZONE` (Bright Data answers `client_10002`) paused Bright Data for 24 hours, and the pause outlived the corrected zone until Hermes was restarted.
+- Jina's header lines (`Title:`, `URL Source:`, `Markdown Content:`) no longer count towards the length rules (E2, E7, E8, C1–C5, K8, V15); the markers are still searched in the whole text, title included (D37). A Jina reply with header lines only is now an empty page, and a short page whose header lines lifted it above 500 characters is now checked as short. On the benchmark data: 3 more silent failures recognised, no new false alarm among 226 complete Jina pages.
+- The first stage that looks fine waits at most 8 s for Keenable's reference copy, no longer up to Keenable's deadline of 25 s, and the wait ends at once on an interrupt (`/stop`) (K3, S8, D35). In the benchmarks the comparison decided only with copies that had arrived within 8 s. Keenable as the last stage still waits up to its deadline, but also ends on an interrupt.
+- After an interrupt, Keenable's answer, if it has already arrived, is handled like the last stage instead of being dropped: a copy can be returned, an error or a wall is listed with its own reason. Without a Keenable key the log says `keenable=no_key` instead of `keenable=interrupted` (S8, L1).
+- When the longest-result fallback picks a copy (Keenable, or Tavily if enabled), its note now says that the copy may be older than the live page (V15).
+- The warning about `web.extract_timeout` now comes below 180 s instead of 120 s (Z1, L3); with Hermes' default of 120 s the budget is only 110 s per URL.
+
+**Tests:** the cap of each stage's deadline (A0) is tested (a mutation that dropped it left every test green before).
+
+**Docs:** design (S8, K3, K4, K7, E2, A7, V15, Z1, L1, L3; K9 and V14 removed; D4 with the paywall data, D32 superseded, D35–D37), README, troubleshooting, validation; the module docstring names the current order.
+
 ## 0.3.0 – 2026-10-19
 
 A new chain of four services, Jina → Bright Data → Firecrawl → Keenable, with checks of every result against Keenable's copy. Tavily Extract is optional: it runs only if `EXTRACT_CHAIN_ORDER` names it. From web benchmark v2 (2026-10-17/18) and a second, harder set; results on their stored data in `docs/validation.md`.

@@ -28,7 +28,6 @@ Per URL:
 3. Each result is classified: an error, an empty page, a bot-check page or a consent wall moves on to the next stage. A paywall ends the chain with a note; no further provider is asked.
 4. A result that looks fine is checked. It is *suspect* if it is very short, a print view, a short page with a JavaScript or bot-check hint, a short page full of consent text, or if Keenable's copy is at least 1.5 times as long. A suspect result is kept, and the next stage is asked.
 5. The first result that passes is returned. If none passes, the longest kept result is returned with a note; otherwise a consent-wall or bot-check page with a note; otherwise one error listing every reason, e.g. `Jina: target HTTP 403; Bright Data: target HTTP 403; Firecrawl: target HTTP 403; Keenable: Gateway timeout`.
-6. If two live stages report the page as gone (404/410) before Firecrawl was asked, no further live stage is asked; Keenable's copy is returned with a note, if it has one.
 
 Each provider is asked at most once per URL; URLs of one call run concurrently. Rules in detail: [design.md, section 5](docs/design.md#5-chain-per-url).
 
@@ -81,7 +80,7 @@ web:
   extract_timeout: 180       # Hermes' default is 120; the chain needs up to 170 s per URL
 ```
 
-`web.extract_timeout` bounds the whole call, and Hermes discards every result of a call that exceeds it. The plugin gives each URL `web.extract_timeout` minus 10 s, at most 170 s, and skips a stage when less than 10 s are left. Below 120 s it logs a warning.
+`web.extract_timeout` bounds the whole call, and Hermes discards every result of a call that exceeds it. The plugin gives each URL `web.extract_timeout` minus 10 s, at most 170 s, and skips a stage when less than 10 s are left. Below 180 s it logs a warning.
 
 Put the keys into the profile's `.env`:
 
@@ -141,7 +140,7 @@ Every note is one line at the top of the text, starting with `[extract-chain]` (
 | `Copy via <Provider>; it may be older than the live page (<reasons>).` | The text is a copy from Tavily or Keenable |
 | `Paywall indicators found; the text is probably only the free teaser.` | Paywall markers found; no further provider is asked |
 | `No source passed the checks; this is the longest result (<Provider>, <n> characters; <reasons>).` | Every result failed or was suspect; the longest one is returned |
-| `The live page returned HTTP <status>; this is an older copy from Keenable's index.` | Two live stages report the page as gone (404/410); Keenable still had a copy |
+| `No source passed the checks; this is the longest result, a copy that may be older than the live page (<Provider>, <n> characters; <reasons>).` | As above, and the longest result is a copy from Tavily or Keenable |
 | `Consent wall detected; no alternative source found (<reasons>). The text below is the consent page.` | Only a consent page could be fetched |
 | `This looks like a bot-check page; no other source had the page (<reasons>). The text below is what the site returned.` | Only a bot-check page could be fetched |
 | `PDF cut to the first <n> of <total> pages (Firecrawl page cap).` | A long PDF came via Firecrawl |
