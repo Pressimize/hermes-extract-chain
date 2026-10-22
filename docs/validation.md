@@ -11,8 +11,8 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.2.1, v0.2.2:** unit tests and replay (output identical to v0.2.0); no new live check. The pause (K7, v0.2.1) was checked with unit tests and a test clock only, because no real 402 was available.
 - **v0.2.3:** unit tests and replay (output identical to v0.2.0); the one marker change (E6) alters no classification of the 727 stored texts of the chain test, the live check and the search test. v0.2.0 and v0.2.3 were run side by side on the same simulated provider replies (fetchers, provider, chain), and the tests of v0.2.0 were run against v0.2.3; every difference is an entry of the changelog.
 - **v0.2.4:** unit tests, replay (output identical to v0.2.0) and the same side-by-side run of v0.2.3 and v0.2.4.
-- **v0.2.5:** unit tests and stored data (section *v0.2.5: stored data*). Unlike the releases before, the classification changes results.
-- **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 are now killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
+- **v0.2.5:** unit tests and stored data (section *v0.2.5: stored data*). Unlike the releases before, its classification changed results.
+- **v0.2.6:** unit tests; replay identical to v0.2.5 (13 of 14 free articles complete); the new tag rule (N01) changes the class of none of the 626 stored TinyFish pages of the search test, in either mode; a mutation run with mutmut 3.3.1 (137 of 1,327 mutants survived; 95 were then killed by new or tightened tests, the rest are equivalent or outside the spec); and v0.2.5 and v0.2.6 run side by side on 14,092 simulated replies: requests differ only where N01 changes a class, and every difference is an entry of the changelog.
 - **v0.3.0:** unit tests; replay on the data of web benchmark v2, two sets (section *v0.3.0*); live check of 20 pages on 2026-10-19.
 - **v0.3.1:** unit tests; replay on the same two sets, compared page by page with v0.3.0 (section *v0.3.1*); no new live check (no change to the requests).
 - **v0.3.2:** unit tests; replay in the default order and with Bright Data first, page by page against v0.3.1; a probe of Bright Data with three requests (section *v0.3.2*).
@@ -67,14 +67,14 @@ No page reached the removed rule K9 in either version. The wait limit (D35) and 
 |---|---|---|---|---|---|
 | default: Jina → Bright Data → Firecrawl → Keenable | 1 (132) | **116** | 8 | 8 | 0 |
 | default: Jina → Bright Data → Firecrawl → Keenable | 2 (197) | **170** | 8 | 19 | 0 |
-| previous default: Bright Data → Jina → Firecrawl → Tavily → Keenable | 1 (132) | 118 | 9 | 5 | 0 |
-| previous default: Bright Data → Jina → Firecrawl → Tavily → Keenable | 2 (197) | 160 | 7 | 30 | 0 |
+| draft default before D34: Bright Data → Jina → Firecrawl → Tavily → Keenable | 1 (132) | 118 | 9 | 5 | 0 |
+| draft default before D34: Bright Data → Jina → Firecrawl → Tavily → Keenable | 2 (197) | 160 | 7 | 30 | 0 |
 | `EXTRACT_CHAIN_ORDER=jina,brightdata,firecrawl,tavily` (Tavily on) | 1 (132) | 117 | 8 | 7 | 0 |
 
-- **T2 accepted** for the default order: 116 and 170 complete, 27 wrong together. The switch from the previous default is the decision D34: on the harder set 2, Jina first has 10 more complete and 11 fewer wrong results than Bright Data first (paired sign test, p = 0.04), on set 1 it has 2 fewer complete and 3 more wrong results. Tavily changed no result in either set.
-- **Source of the returned result** (default order): set 1: Jina 97, Bright Data 20, Firecrawl 8, Keenable 7. Set 2: Jina 161, Bright Data 26, Firecrawl 7, Keenable 3. Previous order, set 1: Bright Data 97, Jina 19, Firecrawl 8, Keenable 7, Tavily 1.
-- **Notes** (default order, set 1): the paywall note (V3) 5 times (Jina 4, Bright Data 1); the bot-check fallback (V11) once; the longest-result fallback (V15) once. No result needed the wall fallback (V5) or the page-gone copy (V14). Previous order, set 1: the paywall note 5 times, all on Bright Data results; V11 once; no V15.
-- **Against the benchmark model** (previous order; the rules computed on the same grades, 118 complete and 4 wrong): two cases differed, neither changed the number of complete results. On one page every stage failed; the plugin returns the bot-check page of the first stage with its note (fallback), which the replay counts as wrong and the model counted as no result. On another page the plugin reads the error status in Jina's header block (A7) and takes Firecrawl's result instead of Jina's; both are partial. Not repeated for the new order.
+- **T2 accepted** for the default order: 116 and 170 complete, 27 wrong together. The switch from the draft default (Bright Data first) is the decision D34: on the harder set 2, Jina first has 10 more complete and 11 fewer wrong results than Bright Data first (paired sign test, p = 0.04), on set 1 it has 2 fewer complete and 3 more wrong results. Tavily changed no result in either set.
+- **Source of the returned result** (default order): set 1: Jina 97, Bright Data 20, Firecrawl 8, Keenable 7. Set 2: Jina 161, Bright Data 26, Firecrawl 7, Keenable 3. Draft order, set 1: Bright Data 97, Jina 19, Firecrawl 8, Keenable 7, Tavily 1.
+- **Notes** (default order, set 1): the paywall note (V3) 5 times (Jina 4, Bright Data 1); the bot-check fallback (V11) once; the longest-result fallback (V15) once. No result needed the wall fallback (V5) or the page-gone copy (V14, removed in 0.3.1). Draft order, set 1: the paywall note 5 times, all on Bright Data results; V11 once; no V15.
+- **Against the benchmark model** (draft order; the rules computed on the same grades, 118 complete and 4 wrong): two cases differed, neither changed the number of complete results. On one page every stage failed; the plugin returns the bot-check page of the first stage with its note (fallback), which the replay counts as wrong and the model counted as no result. On another page the plugin reads the error status in Jina's header block (A7) and takes Firecrawl's result instead of Jina's; both are partial. Not repeated for the new order.
 
 ### T3 – Live check
 
@@ -96,7 +96,7 @@ The pages were picked from both sets so that every path of the default order occ
   - **Jina:** 10 pages, one of them with the paywall note.
   - **Bright Data:** 3 pages, after a consent wall or bot check from Jina.
   - **Firecrawl:** 3 pages, after Bright Data failed with `brd_policy_20050`, `brd_forbidden` or a wall.
-  - **Keenable:** 3 copies with note N17. One followed 403 from Jina and Firecrawl and `brd_http_status` from Bright Data; that is no page-gone stop, because N6 counts only 404 and 410.
+  - **Keenable:** 3 copies with the copy note (V13). One followed 403 from Jina and Firecrawl and `brd_http_status` from Bright Data; that was no page-gone stop, because K9 (removed in 0.3.1, D36) counted only 404 and 410.
   - **Bot-check fallback (V11):** on one job board every stage returned the bot check and Keenable returned 403. The bot-check page came back with its note.
 - **Against the replay:** 6 pages took another path live than in the stored data, because the sites answered differently a day later.
   - 3 times an earlier stage now passed: Jina twice, where it had failed before, and Bright Data once.
@@ -104,9 +104,9 @@ The pages were picked from both sets so that every path of the default order occ
   - Once Firecrawl passed a page that ended at Keenable in the replay.
   - Once all live stages returned 403 where Bright Data had returned a paywalled text.
   - Every note matched its result.
-- **Bright Data errors** arrive with their codes (`brd_policy_20050`, `brd_forbidden`, `brd_http_status`) and the chain moves on, as A6 requires.
+- **Bright Data errors** arrive with their codes (`brd_policy_20050`, `brd_forbidden`, `brd_http_status`) and the chain moves on, as A1 requires.
 
-## T2 – Replay on the chain-test data (history)
+## T2 – Replay on the chain-test data (v0.1–v0.2, history)
 
 ### Data set
 
@@ -118,19 +118,19 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
 
 ### Replay
 
-`scripts/replay.py` runs `run_chain` on the stored results and compares the outcome with the prototype.
+The replay script of v0.1–v0.2 ran `run_chain` on the stored results and compared the outcome with the prototype. The current `scripts/replay.py` reads the data of web benchmark v2 instead.
 
 - **Free articles complete:** plugin 13 of 14, prototype 13 of 14.
-  - Missing is zeit.de: TinyFish `target_http_error`, Firecrawl empty HTML, Keenable gateway timeout. The plugin returns an error listing all three reasons.
+  - Missing was zeit.de: TinyFish `target_http_error`, Firecrawl empty HTML, Keenable gateway timeout. The plugin returned an error listing all three reasons.
 - **Paywall notes on free articles:** none.
 - **Differences to the prototype,** all explained by D4 (a paywall ends the chain):
-  - `spiegelplus1`, `heiseplus1`: the prototype asked Keenable after TinyFish's teaser and kept the teaser. The plugin returns the teaser at once with the paywall note; the content is the same, one Keenable call less.
-  - `metered2`: the prototype asked Keenable after Firecrawl's teaser. The plugin returns Firecrawl's teaser at once, with source and paywall notes.
+  - `spiegelplus1`, `heiseplus1`: the prototype asked Keenable after TinyFish's teaser and kept the teaser. The plugin returned the teaser at once with the paywall note; the content was the same, one Keenable call less.
+  - `metered2`: the prototype asked Keenable after Firecrawl's teaser. The plugin returned Firecrawl's teaser at once, with source and paywall notes.
 - **Effect of the rule changes,** measured on all six providers' stored texts:
-  - The wall window (E3) removes the false wall alarm on n-tv via Firecrawl.
-  - The whole-page paywall area (E4) removes the false paywall alarms on Spiegel, Welt and stern via Firecrawl.
-  - No paywall hit of a chain provider is lost. One Exa hit is lost; Exa is not part of the chain.
-  - Still wrong: `metered3` via Parallel and Tavily (registration and subscription texts). Neither provider is in the chain.
+  - The wall window (E3) removed the false wall alarm on n-tv via Firecrawl.
+  - The whole-page paywall area (E4) removed the false paywall alarms on Spiegel, Welt and stern via Firecrawl.
+  - No paywall hit of a chain provider was lost. One Exa hit was lost; Exa was not part of the chain.
+  - Still wrong: `metered3` via Parallel and Tavily (registration and subscription texts). Neither provider was in the chain then.
 
 ## T3 – Live check (v0.1.0, history)
 
@@ -138,10 +138,10 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
 
 3 URLs in a throwaway Hermes Desktop profile (v0.21.6).
 
-- The plugin loads, and `web.extract_backend: extract-chain` takes effect.
-- All three paths work: heise `tinyfish=ok`; stern `tinyfish=bot_blocked`, then Firecrawl; golem `tinyfish=wall keenable=ok`.
-- Firecrawl and Keenable accept Bearer auth.
-- The notes arrive in the tool result.
+- The plugin loaded, and `web.extract_backend: extract-chain` took effect.
+- All three paths worked: heise `tinyfish=ok`; stern `tinyfish=bot_blocked`, then Firecrawl; golem `tinyfish=wall keenable=ok`.
+- Firecrawl and Keenable accepted Bearer auth.
+- The notes arrived in the tool result.
 - **Finding:** stern got a false paywall note via Firecrawl. This led to rule change E4 (D12).
 
 ### Main run
@@ -159,7 +159,7 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
 
 - Order and count correct in every call, including the two with 3 URLs.
 - Longest call 19.9 s (FAZ via Firecrawl, inside a 3-URL call); median about 3 s.
-- Every `keenable=ok` result starts with the index note.
+- Every `keenable=ok` result started with the index note of v0.1.
 - Rate per provider in any 60 s window: TinyFish at most 7, Keenable 3, Firecrawl 2.
 
 **Paths taken**
@@ -180,22 +180,22 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
 - **Method:** closing sentence where known (14 old, 9 new articles); otherwise inspection of the end of the text.
 - **Old articles:** 13 of 14, as in the chain test; zeit.de refused every access.
 - **New articles:** 16 of 16.
-  - heise: the closing sentence is present, with code formatting.
-  - BR: the text ends with the republication note. The closing sentence collected beforehand is absent; it most likely came from the audio teaser.
-  - FAZ (via Firecrawl, 35,758 characters): Hermes truncates to 30,000 characters (head 75 % + tail 25 %). The article ends at about 21,100 characters, inside the untruncated head.
+  - heise: the closing sentence was present, with code formatting.
+  - BR: the text ended with the republication note. The closing sentence collected beforehand was absent; it most likely came from the audio teaser.
+  - FAZ (via Firecrawl, 35,758 characters): Hermes truncated to 30,000 characters (head 75 % + tail 25 %). The article ended at about 21,100 characters, inside the untruncated head.
 
 **False alarms:** no paywall or wall note on any free article.
 
 **Paywalled articles** (17, old and new):
 
 - Paywall note on 4: SPIEGEL+ 3, heise+ 1.
-- Metered news site, plus articles (2): wall note with Keenable's paywall message; the text contains the teaser and the subscription notice.
-- Not recognised (no marker, D5): FAZ 3, SZ 3, Welt 1, Handelsblatt 2, Tagesspiegel 1, Golem+ 1. For Golem+ the Keenable copy is only the teaser.
-  - Tagesspiegel shows `showPaywall: true` in the text, but only one general marker (`paywall`) matches.
+- Metered news site, plus articles (2): wall note with Keenable's paywall message; the text contained the teaser and the subscription notice.
+- Not recognised (no marker, D5): FAZ 3, SZ 3, Welt 1, Handelsblatt 2, Tagesspiegel 1, Golem+ 1. For Golem+ the Keenable copy was only the teaser.
+  - Tagesspiegel showed `showPaywall: true` in the text, but only one general marker (`paywall`) matched.
 
-**Zeit (new, unclear):** TinyFish and Firecrawl get 403. Keenable returns a copy of about 1,700 characters with *Diese Fragen beantwortet der Artikel*, probably a Z+ teaser; the index note is present.
+**Zeit (new, unclear):** TinyFish and Firecrawl got 403. Keenable returned a copy of about 1,700 characters with *Diese Fragen beantwortet der Artikel*, probably a Z+ teaser; the index note was present.
 
-**TinyFish and FAZ:** TinyFish failed on 3 of 5 FAZ pages with `target_http_error`; in the chain test FAZ worked. Possibly `ttl: 3600` (D7) forces more live fetches, which FAZ refuses. Firecrawl covers it at one credit per page. To be watched.
+**TinyFish and FAZ:** TinyFish failed on 3 of 5 FAZ pages with `target_http_error`; in the chain test FAZ worked. Possibly `ttl: 3600` (D7) forced more live fetches, which FAZ refused. Firecrawl covered it at one credit per page. Not followed up: TinyFish was removed in 0.3.0 (D26).
 
 **Usage:** TinyFish 54 URLs (free), Firecrawl 8 credits, Keenable 12 requests.
 
@@ -203,14 +203,14 @@ The chain test of 2026-10-09 fetched 23 German news articles from 14 publishers 
 
 ### Results per URL
 
-[`data/live-check/results.csv`](../data/live-check/results.csv) has one row per URL: paywall status, the plugin's log line (the live run used v0.1.0, which logged Firecrawl and Keenable errors as `error`; v0.2.0 shows codes, L1), the length of the content as the model sees it, the duration and the assessment. The test profile had `web.extract_char_limit: 30000`; Hermes' default is 15,000.
+[`data/live-check/results.csv`](../data/live-check/results.csv) has one row per URL: paywall status, the plugin's log line (the live run used v0.1.0, which logged Firecrawl and Keenable errors as `error`; error codes in the log came with v0.2.0, L1), the length of the content as the model sees it, the duration and the assessment. The test profile had `web.extract_char_limit: 30000`; Hermes' default is 15,000.
 
 ## T4 – Review against the design (v0.1.0, history)
 
 An independent review checked code, tests and this file against every requirement ID and found no blocker. Fixed:
 
-- **Log line (L1, S6):** an invalid URL made `urlsplit` raise inside `finally`, which would have failed the whole call. Without a host, the full URL including its query appeared in the log. Now `<invalid url>` or `<no host>`.
-- **TinyFish matching (A1):** a single-URL reply that names another URL (redirect) still counts for the input URL; before, it cost an unnecessary Firecrawl call.
+- **Log line (L1, S6):** an invalid URL made `urlsplit` raise inside `finally`, which would have failed the whole call. Without a host, the full URL including its query appeared in the log. Fixed: `<invalid url>` or `<no host>`.
+- **TinyFish matching (A1 of v0.1):** a single-URL reply that named another URL (redirect) was made to count for the input URL; before, it cost an unnecessary Firecrawl call.
 - **Key protection (S3):** a key echoed in a provider's error text is replaced by `[key]`.
 - **T3:** per-URL table and the note on the test profile's character limit.
 
@@ -221,8 +221,8 @@ Left open on purpose: no concurrency limit for Firecrawl (K6, D16).
 The review covered failure modes and costs: Hermes' extract path, plugin loading and installation, and the providers' documented failure behaviour. Findings, fixed in v0.2.0 (D13, [CHANGELOG.md](../CHANGELOG.md)):
 
 - v0.1.0 bypassed the website blocklist (S7) and kept fetching after the user stopped the turn (S8).
-- One long PDF that TinyFish cannot fetch could cost hundreds of Firecrawl credits (A2, V7). Verified live once: an arXiv PDF with `maxPages: 2` returned `numPages: 2`, `totalPages: 15` and `creditsUsed: 2`.
-- Rules on non-news pages: the 554 TinyFish texts of an earlier search test (software documentation, forums and Q&A sites, mostly English) produce no wall or paywall classification.
+- One long PDF that TinyFish could not fetch could cost hundreds of Firecrawl credits (A2, V7). Verified live once: an arXiv PDF with `maxPages: 2` returned `numPages: 2`, `totalPages: 15` and `creditsUsed: 2`.
+- Rules on non-news pages: the 554 TinyFish texts of an earlier search test (software documentation, forums and Q&A sites, mostly English) produced no wall or paywall classification.
 - Remaining by design: [design.md, section 13](design.md#13-known-limitations).
 
 ## v0.2.5: stored data (history)
@@ -231,11 +231,11 @@ Three checks of v0.2.4 against v0.2.5 on stored data. Texts are never quoted; ho
 
 ### Replay of the chain test
 
-`scripts/replay.py` on the 23 articles of the chain test, once with the v0.2.4 sources and once with v0.2.5.
+The replay script of that time on the 23 articles of the chain test, once with the v0.2.4 sources and once with v0.2.5.
 
-- Free articles complete: 13 of 14 in both versions. No free article gets a paywall note.
-- One line differs: `weltplus1` (paywalled). TinyFish's text has 268 visible characters, so it is `thin` now (E8); before, it was returned as `ok`. Firecrawl is asked and returns 12,863 characters, which carry the source note (V2) and the paywall note (V3).
-- Every other line is identical.
+- Free articles complete: 13 of 14 in both versions. No free article got a paywall note.
+- One line differed: `weltplus1` (paywalled). TinyFish's text had 268 visible characters, so it became `thin` in v0.2.5 (E8); before, it was returned as `ok`. Firecrawl was asked and returned 12,863 characters, which carried the source note (V2) and the paywall note (V3).
+- Every other line was identical.
 
 ### Classes of the 554 TinyFish texts of the search test
 
@@ -252,7 +252,7 @@ The 20 texts that changed class (visible length in characters):
 - `challenge`: addons.mozilla.org 209, pypi.org 209, www.amazon.com 142, www.techpowerup.com 267.
 - `thin`: caddy.community 460, caddy.current-version.com 66, caddyserver.com 489 (twice), community.bitdefender.com 260, dannyda.com 344, docs.docker.com 383, forum.opnsense.org 474, hatchbox.io 291, ollama.com 339, openrouter.ai 298, vaultwarden.discourse.group 284, www.youtube.com 164 (four times).
 
-No text changed in any other way. About half of the 20 are real short pages (a version page, forum and docs pages); in the chain each costs one Firecrawl request, which is 3.6 % of the pages.
+No text changed in any other way. About half of the 20 were real short pages (a version page, forum and docs pages); in the v0.2.5 chain each cost one Firecrawl request, which was 3.6 % of the pages.
 
 ### Job-board measurement
 
@@ -267,4 +267,4 @@ Provider outputs for job-board pages (two runs), variants TinyFish markdown and 
 | meinestadt | error | ok |
 | all other lines | ok | ok |
 
-Under v0.2.4 every line without an error was `ok`. The expectations of the specification are met: isaca is a challenge on both providers (Firecrawl in run 2), the StepStone list via TinyFish is `thin`, euremote-a2 via Firecrawl is a challenge, monster via TinyFish is `ok` with the redirect condition true. No other line has the redirect condition true.
+Under v0.2.4 every line without an error was `ok`. The expectations of the v0.2.5 specification were met: isaca was a challenge on both providers (Firecrawl in run 2), the StepStone list via TinyFish was `thin`, euremote-a2 via Firecrawl was a challenge, monster via TinyFish was `ok` with the redirect condition true. No other line had the redirect condition true.

@@ -1,16 +1,12 @@
 # Evaluation: how the providers were chosen
 
-The chain of v0.3.0, Jina → Bright Data → Firecrawl → Keenable, comes from web benchmark v2 and a second, harder set of pages (next section). The chain TinyFish → Firecrawl → Keenable of v0.1–v0.2 was the result of three tests run on 2026-10-09 with Hermes Agent 0.21.6, kept below as history:
+The current chain (since v0.3.0), Jina → Bright Data → Firecrawl → Keenable with Tavily optional, comes from web benchmark v2 and a second, harder set of pages (next section); the decision is summarised in [Decision (v0.3)](#decision-v03).
 
-1. **Extraction test**: six providers, 15 pages, a question per page answered by three LLMs. It shows which providers deliver correct and current content.
-2. **Chain test**: the same six providers on 23 German news articles, without an LLM. It shows who gets past consent walls and paywalls, and what a chain can reach.
-3. **Live check of the plugin**: 54 URLs through Hermes' real `web_extract` path, in [validation.md](validation.md).
-
-The URL lists and per-URL results of these tests are in [`data/`](../data); article texts are not published.
+The chain TinyFish → Firecrawl → Keenable of v0.1–v0.2 was the result of three tests run on 2026-10-09 with Hermes Agent 0.21.6. They are kept further down as [history](#history-the-tests-behind-v01v02-2026-10-09).
 
 ## Web benchmark v2 (2026-10-17/18)
 
-The basis of the v0.3.0 chain and of decisions D26–D34 in [design.md](design.md#14-decisions).
+The basis of the current chain and of decisions D26–D34 in [design.md](design.md#14-decisions).
 
 **Setup**
 
@@ -43,12 +39,12 @@ Complete single results:
 | Crawl4AI (self-hosted) | 78 | 136 |
 | TinyFish | 71 | 133 |
 
-Chains, computed with the plugin's own `run_chain` on the stored results ([validation.md](validation.md#v030)):
+Chains, computed with the plugin's own `run_chain` of v0.3.0 on the stored results ([validation.md](validation.md#v030); later releases changed the default order's result slightly, see the v0.3.1 and v0.3.2 sections there):
 
 | Chain | Set 1: complete / wrong | Set 2: complete / wrong |
 |---|---|---|
 | **Jina → Bright Data → Firecrawl → Keenable** (default) | **116 / 8** | **170 / 19** |
-| Bright Data → Jina → Firecrawl → Tavily → Keenable | 118 / 5 | 160 / 30 |
+| Bright Data → Jina → Firecrawl → Tavily → Keenable (draft default before D34) | 118 / 5 | 160 / 30 |
 | TinyFish → Firecrawl → Keenable (v0.1–v0.2) | 100 of 131 | 146 / 45 |
 
 **Findings**
@@ -61,11 +57,32 @@ Chains, computed with the plugin's own `run_chain` on the stored results ([valid
   - It is no longer part of the chain.
 - **Tavily** changed no result in either set. On set 2 only 38 % of its failures were recognisable, most of them as a bare "Failed to fetch url". It is optional.
 - **Keenable** reports its failures worst; most of them are old or different copies. It therefore stays the last stage and serves as the reference.
-- **Self-hosted browsers:** a Camoufox stage first would add about 16 complete pages over both sets (302 against 286 of 329). It needs a separate host with open egress and is not part of v0.3.0.
+- **Self-hosted browsers:** a Camoufox stage first would add about 16 complete pages over both sets (302 against 286 of 329). It needs a separate host with open egress and is not part of the chain.
 
 Failure reporting per provider (both sets, failure = not complete): Crawl4AI names the protection it hit; TinyFish and DonSeTch return error codes. Bright Data reports the target's status, often 502. Jina reports only in a warning line of its text. Tavily reports without a reason. Keenable rarely reports at all, and the browsers never do.
 
-## Test 1 – Extraction test with questions
+## Decision (v0.3)
+
+The chain since v0.3.0. The reasons are the decisions in [design.md](design.md#14-decisions); this is only the overview.
+
+- **Jina first:** on the harder set 2 the most complete results, with fewer wrong ones than Bright Data first; on set 1 Bright Data first was 2 complete results ahead (D34).
+- **Bright Data second:** it catches Jina's rate limit (429) when several agents share Jina's keyless limit, and a second live stage before Firecrawl spares Firecrawl credits (D34).
+- **Firecrawl third:** live; it bills a credit per page, also for the 403/404 pages it returns (A2), so the two other live stages go first (D34).
+- **Keenable last, and the reference for every URL:** it reports its failures worst, and its copy is what the length check C5 compares against (D27, D28).
+- **Tavily optional:** it changed no result in either set; it runs only if `EXTRACT_CHAIN_ORDER` names it (D34).
+- **Not in the chain:** TinyFish (removed, D26); Exa and Parallel (measured on set 1 only, kept for search); self-hosted browsers (they need a separate host).
+
+## History: the tests behind v0.1–v0.2 (2026-10-09)
+
+This section, up to *Limits of this evaluation*, describes the choice of the TinyFish chain of v0.1–v0.2 and the tests behind it. It is kept as a record; the current chain is in [Decision (v0.3)](#decision-v03). The three tests:
+
+1. **Extraction test**: six providers, 15 pages, a question per page answered by three LLMs. It showed which providers delivered correct and current content.
+2. **Chain test**: the same six providers on 23 German news articles, without an LLM. It showed who got past consent walls and paywalls, and what a chain could reach.
+3. **Live check of the plugin (v0.1.0)**: 54 URLs through Hermes' real `web_extract` path, in [validation.md](validation.md).
+
+The URL lists and per-URL results of these tests are in [`data/`](../data); article texts are not published.
+
+### Test 1 – Extraction test with questions
 
 **Setup**
 
@@ -107,26 +124,26 @@ The 22 are the 11 answerable cases times two repetitions. On the four traps, eve
 
 **Failure patterns**
 
-- **TinyFish:** reads JavaScript and AJAX pages; current in both freshness cases.
+- **TinyFish:** read JavaScript and AJAX pages; current in both freshness cases.
   - Error code per URL: `login_required`, `page_not_found`, `bot_blocked`, `target_unreachable` for 403 and the empty page.
-  - Fails on the Cloudflare challenge and the Golem consent page, and reports both.
+  - Failed on the Cloudflare challenge and the Golem consent page, and reported both.
   - No wrong result.
   - In a later run over 626 URLs it returned `bot_blocked` for all 34 pages of the Stack Exchange network.
-- **Firecrawl:** reads JavaScript, AJAX and the Cloudflare challenge; current in both freshness cases.
-  - Fails on the Golem consent page.
-  - Returns 403/404 pages as empty content without an error field.
+- **Firecrawl:** read JavaScript, AJAX and the Cloudflare challenge; current in both freshness cases.
+  - Failed on the Golem consent page.
+  - Returned 403/404 pages as empty content without an error field.
   - Longest texts (whole pages).
   - No wrong result.
-- **Keenable:** reads the JavaScript page, not the AJAX shop.
+- **Keenable:** read the JavaScript page, not the AJAX shop.
   - **Outdated copy without notice** (GitHub releases).
-  - Cuts pages at 50,000 characters.
+  - Cut pages at 50,000 characters.
   - Distinct error texts (forbidden, not found, unprocessable).
-- **Tavily:** reads the JavaScript page, not the AJAX shop. **Outdated copies without notice** (Hacker News, GitHub releases).
-- **Exa:** empty scaffold on JavaScript pages; **outdated Hacker News copy**; reads Golem behind the consent wall.
-  - Failed URLs are simply missing from the result; Hermes then reports *Content was inaccessible or not found*.
-- **Parallel:** empty scaffold on JavaScript pages; passes the Cloudflare challenge; reads Golem; **old Stack Overflow title**.
+- **Tavily:** read the JavaScript page, not the AJAX shop. **Outdated copies without notice** (Hacker News, GitHub releases).
+- **Exa:** empty scaffold on JavaScript pages; **outdated Hacker News copy**; read Golem behind the consent wall.
+  - Failed URLs were simply missing from the result; Hermes then reported *Content was inaccessible or not found*.
+- **Parallel:** empty scaffold on JavaScript pages; passed the Cloudflare challenge; read Golem; **old Stack Overflow title**.
 
-The most dangerous failure is the outdated copy: the model cannot recognise it and presents it as current. It occurred at Tavily, Exa, Parallel and Keenable. TinyFish and Firecrawl, which fetch live, never returned one.
+The most dangerous failure was the outdated copy: the model cannot recognise it and presents it as current. It occurred at Tavily, Exa, Parallel and Keenable. TinyFish and Firecrawl, which fetch live, never returned one.
 
 **Speed** (run 1, duration of `web_extract`)
 
@@ -136,9 +153,9 @@ The most dangerous failure is the outdated copy: the model cannot recognise it a
 | Median, successful fetches | 1.9 s | 0.6 s | 0.5 s | 0.8 s | 1.5 s | 0.5 s |
 | Slowest fetch | 7.1 s (login) | 9.1 s (long page) | 10.4 s (403) | 25.9 s (AJAX shop) | 9.4 s (anti-bot) | 16.1 s (anti-bot) |
 
-Index-based providers answer in 0.5–0.9 s; these were also the ones with outdated content. The live fetchers need 1–6 s. In context: the models took 3.6–4.7 s (median) just to make the tool call.
+Index-based providers answered in 0.5–0.9 s; these were also the ones with outdated content. The live fetchers needed 1–6 s. In context: the models took 3.6–4.7 s (median) just to make the tool call.
 
-## Test 2 – Chain test: consent walls and paywalls
+### Test 2 – Chain test: consent walls and paywalls
 
 **Setup**
 
@@ -170,19 +187,21 @@ Index-based providers answer in 0.5–0.9 s; these were also the ones with outda
 
 **Findings**
 
-- **Consent walls:** Keenable, Exa and Parallel get past them, because they serve stored copies. The two live fetchers and Tavily do not.
-- **Paywalls:** no provider gets past any of them. The chain can only label them.
-  - Paywall note on SPIEGEL+ and heise+, and on one of the two plus articles of the metered news site; the other comes back with the consent-wall note and Keenable's paywall message.
-  - FAZ+, WELTplus, SZ Plus and Golem+ teasers carry no marker and pass unlabelled.
-- **All six providers together** reach 13 of 14 free articles; no provider got zeit.de. The chain TinyFish → Firecrawl → Keenable already reaches this maximum, so another last stage would add nothing.
-- **Calls in chain mode** (replay with the plugin's rules): Firecrawl was needed for 4 of 23 URLs, Keenable for 6.
-- **The classification rules were tuned on these 23 articles,** so this result is optimistic. The live check on new articles ([validation.md](validation.md)) is the independent test.
+- **Consent walls:** Keenable, Exa and Parallel got past them, because they serve stored copies. The two live fetchers and Tavily did not.
+- **Paywalls:** no provider got past any of them. The chain could only label them.
+  - Paywall note on SPIEGEL+ and heise+, and on one of the two plus articles of the metered news site; the other came back with the consent-wall note and Keenable's paywall message.
+  - FAZ+, WELTplus, SZ Plus and Golem+ teasers carried no marker and passed unlabelled.
+- **All six providers together** reached 13 of 14 free articles; no provider got zeit.de. The chain TinyFish → Firecrawl → Keenable already reached this maximum, so another last stage would have added nothing.
+- **Calls in chain mode** (replay with the rules of v0.1): Firecrawl was needed for 4 of 23 URLs, Keenable for 6.
+- **The classification rules were tuned on these 23 articles,** so this result was optimistic. The live check on new articles ([validation.md](validation.md)) was the independent test.
 
-## Test 3 – Live check of the plugin
+### Test 3 – Live check of the plugin
 
-54 URLs through Hermes' real `web_extract` path: 29 of 30 free articles complete (TinyFish alone: 20), no false paywall or wall note. Setup and results: [validation.md](validation.md); per-URL data: [live-check results](../data/live-check/results.csv).
+v0.1.0, 54 URLs through Hermes' real `web_extract` path: 29 of 30 free articles complete (TinyFish alone: 20), no false paywall or wall note. Setup and results: [validation.md](validation.md); per-URL data: [live-check results](../data/live-check/results.csv).
 
-## Free tiers and costs (vendor pages, 2026-10-09)
+### Free tiers and costs (vendor pages, 2026-10-09)
+
+Vendor terms as read on 2026-10-09, for the providers compared then. The terms of the providers in the current chain, as of a later date, are in the [README](../README.md#costs-and-quotas).
 
 | Provider | Free tier | Extraction cost | Free tier covers about |
 |---|---|---|---|
@@ -193,51 +212,55 @@ Index-based providers answer in 0.5–0.9 s; these were also the ones with outda
 | Tavily | 1,000 credits/month | 1 credit per 5 successful URLs (basic) | 5,000 pages/month, shared with search |
 | Parallel | 5,000 requests and $5 credit per month | $1 per 1,000 URLs | up to 5,000 pages/month, shared with search |
 
-## Decision (v0.1–v0.2)
+### History: decision of v0.1–v0.2
+
+This was the decision for v0.1–v0.2, superseded in 0.3.0; the current one is [Decision (v0.3)](#decision-v03).
 
 **TinyFish first.**
 
-- Free for 1,000 URLs a day, live and current, and returns the main content, which keeps notes and token use small.
+- Free for 1,000 URLs a day, live and current, and it returned the main content, which kept notes and token use small.
 - It never returned wrong content.
-- Its per-URL error codes tell whether another provider can help: `bot_blocked` yes, `page_not_found` no.
-- Weak spots are bot protection (Cloudflare challenge, stern.de, the Stack Exchange network) and consent walls.
+- Its per-URL error codes told whether another provider could help: `bot_blocked` yes, `page_not_found` no.
+- Weak spots were bot protection (Cloudflare challenge, stern.de, the Stack Exchange network) and consent walls.
 
 **Firecrawl second.**
 
-- Live and current; it passes most of the bot protection that stops TinyFish (Cloudflare challenge, stern.de, the metered news site, Stack Overflow).
+- Live and current; it passed most of the bot protection that stopped TinyFish (Cloudflare challenge, stern.de, the metered news site, Stack Overflow).
 - It never returned wrong content.
-- It costs one credit per page and returns whole pages, so it is only a fallback.
-- It fails on the same consent walls as TinyFish, which is why the chain skips it when TinyFish hits a wall.
+- It cost one credit per page and returned whole pages, so it was only a fallback.
+- It failed on the same consent walls as TinyFish, which is why the v0.1–v0.2 chain skipped it when TinyFish hit a wall.
 
 **Keenable last.**
 
-- Index copies get past consent walls; Keenable has the largest free tier (100,000 requests/month).
-- It reports paywalls explicitly (*The page is behind a login or paywall*).
-- Its copies can be outdated (GitHub releases, n-tv), so it is the last resort, and its results always carry the note *it may be older than the live page*.
+- Index copies got past consent walls; Keenable had the largest free tier (100,000 requests/month).
+- It reported paywalls explicitly (*The page is behind a login or paywall*).
+- Its copies could be outdated (GitHub releases, n-tv), so it was the last resort, and its results always carried the note *it may be older than the live page*.
 
-**Not used:**
+**Not used then:**
 
-- **Exa:** solves consent walls like Keenable, but bills per page, drops failed URLs silently, returned empty scaffolds for JavaScript pages and an outdated copy.
-- **Parallel:** cut three news sites to the first 600 characters without an error, returned empty scaffolds for JavaScript pages and an old Stack Overflow title; bills per URL.
-- **Tavily:** returned outdated copies and fails on consent walls.
+- **Exa:** solved consent walls like Keenable, but billed per page, dropped failed URLs silently, returned empty scaffolds for JavaScript pages and an outdated copy.
+- **Parallel:** cut three news sites to the first 600 characters without an error, returned empty scaffolds for JavaScript pages and an old Stack Overflow title; billed per URL.
+- **Tavily:** returned outdated copies and failed on consent walls.
 
 **Why the providers were fixed** (up to v0.2; since 0.3.0 the order is configurable, D27). The rules depended on these roles:
 
-- the final error codes are TinyFish's;
-- the paywall check skips the footer of Firecrawl's whole pages;
-- a consent wall skips Firecrawl;
-- only Keenable results carry the "may be older" note.
+- the final error codes were TinyFish's;
+- the paywall check skipped the footer of Firecrawl's whole pages;
+- a consent wall skipped Firecrawl;
+- only Keenable results carried the "may be older" note.
 
-Swapping a provider would need an adapter that declares its role, plus a re-validation of the rules (README, FAQ).
+Swapping a provider would have needed an adapter that declares its role, plus a re-validation of the rules.
 
 ## Limits of this evaluation
 
-- One fetch per provider and URL, at one point in time, from one location. Bot-protection outcomes and cache ages depend on IP and time; for example, TinyFish read Stack Overflow in test 1 and was blocked on it two hours later.
-- German news sites dominate tests 2 and 3; the paywall and consent markers are German plus common English consent phrases.
-- Test 1 has 15 URLs and no clean model comparison, since each model had its own URLs. Ratings were made by hand.
-- The chain rules were tuned on test 2; test 3 checks them on new articles.
+- One fetch per provider and URL, at one point in time, from one location, in web benchmark v2 as in the tests of 2026-10-09. Bot-protection outcomes and cache ages depend on IP and time; for example, TinyFish read Stack Overflow in test 1 and was blocked on it two hours later.
+- The paywall and consent markers are German plus common English consent phrases; German news sites dominated tests 2 and 3, on which they were tuned.
+- Test 1 had 15 URLs and no clean model comparison, since each model had its own URLs. Ratings were made by hand.
+- The chain rules of v0.1 were tuned on test 2; test 3 checked them on new articles.
 
 ## Data files
+
+The files in `data/` belong to the tests of 2026-10-09 (v0.1–v0.2). The data of web benchmark v2 are not in the repository.
 
 | File | Content |
 |---|---|

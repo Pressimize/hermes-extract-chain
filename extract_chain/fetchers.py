@@ -215,7 +215,7 @@ async def jina(client: httpx.AsyncClient, url: str, key: str, *, deadline: float
 
 
 async def firecrawl(client: httpx.AsyncClient, url: str, key: str, *, deadline: float) -> dict:
-    """A2: scrape one URL; a non-2xx status of the target page counts as an error (D9)."""
+    """A2: scrape one URL; a status of the target page outside 2xx, except 304, counts as an error (D9)."""
     timeout_ms = int(max(1.0, deadline - SERVER_MARGIN) * 1000)
     try:
         response = await _request(

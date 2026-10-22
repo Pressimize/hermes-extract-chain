@@ -176,7 +176,7 @@ def test_key_that_cannot_be_read_counts_as_missing(env):  # S3: e.g. UnscopedSec
 
 # --- N2 stage order -----------------------------------------------------------------------------------------
 
-DEFAULT = ["jina", "brightdata", "firecrawl", "keenable"]  # N2, D-1: Jina first, Tavily only on request
+DEFAULT = ["jina", "brightdata", "firecrawl", "keenable"]  # N2, D34: Jina first, Tavily only on request
 
 
 @pytest.mark.parametrize(
@@ -904,7 +904,7 @@ def test_url_budget_has_a_floor(web_config):  # N9: never below one stage's mini
     assert provider.url_budget() == 10.0
 
 
-def test_default_order_without_setting(env):  # N2, D-1: Jina, Bright Data, Firecrawl, Keenable; no Tavily
+def test_default_order_without_setting(env):  # N2, D34: Jina, Bright Data, Firecrawl, Keenable; no Tavily
     del env["EXTRACT_CHAIN_ORDER"]
     api = Api()  # every service fails
     out = extract(api, [URL])
