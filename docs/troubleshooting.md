@@ -1,6 +1,6 @@
 # Troubleshooting
 
-How failures show up, what the log line means, typical problems with their fixes, and the edge cases the plugin handles on purpose. Requirement IDs refer to [design.md](design.md). This file describes 0.3.0; for the TinyFish chain of v0.1–v0.2 see the file at tag `v0.2.6`.
+How failures show up, what the log line means, typical problems with their fixes, and the edge cases the plugin handles on purpose. Requirement IDs refer to [design.md](design.md). This file describes the current chain (0.3.x); for the TinyFish chain of v0.1–v0.2 see the file at tag `v0.2.6`.
 
 ## Where to look
 
@@ -35,7 +35,7 @@ Problems with a single URL never raise and never fail other URLs of the same cal
 
 ## Log line codes (L1)
 
-Each stage appears as `<stage>=<outcome>`, in order, Keenable last. The outcomes are the classes `ok`, `thin`, `paywall`, `wall`, `empty` and `challenge` (bot-check page), a check, or a short error code.
+Each stage appears as `<stage>=<outcome>`, in order, Keenable last. The outcomes are the classes `ok`, `paywall`, `wall`, `empty` and `challenge` (bot-check page), a check, or a short error code. A `thin` result always shows as `suspect_thin` (C1).
 
 **Checks** (any stage; the stage was passed over and its result kept for the fallback, K4, K8):
 
@@ -171,7 +171,7 @@ The counts per stage in the log show which sites cause it.
 | URL with a fragment (`#…`) | Jina does not receive the fragment; pages that route by fragment may come back as the start page. |
 | No key at all | The provider reports itself unavailable, and Hermes hides `web_extract` unless another web backend is available. Jina alone does not make it available (S2). |
 | Missing key of one stage | That stage is skipped (`no_key`). |
-| User stops the turn | No further requests; remaining stages report `interrupted`, and a wait for Keenable ends within a second. A Keenable copy that has already arrived is still used (S8). |
+| User stops the turn | No further requests: the next stage reports `interrupted`, the stages after it are skipped and not listed in the log, and a wait for Keenable ends within a second. A Keenable copy that has already arrived is still used (S8). |
 | Hermes timeout | All URLs of the call fail, also those that had finished (Hermes discards the whole call). |
 
 Paywalls (detected or not, English ones), the Hermes cache and privacy: [design.md, section 13](design.md#13-known-limitations).

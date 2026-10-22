@@ -4,7 +4,7 @@ A [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin that makes
 
 Hermes uses exactly one extract provider. If it fails on a page (bot protection, a consent wall, a cut-off page), the model gets an error or a bad text. Its only built-in fallback, the keyless rescue, runs when *every* URL of a call fails, and swaps in anonymous providers without saying so. This plugin registers one provider, `extract-chain`, that tries the next service per URL whenever a result fails or looks suspicious. When the result did not come straight from the first service, it adds a short note at the top of the text.
 
-The services and their order come from a web benchmark ([docs/evaluation.md](docs/evaluation.md)); the chain's results on the stored benchmark data are in [docs/validation.md](docs/validation.md).
+The services and their order come from a web benchmark ([docs/evaluation.md](docs/evaluation.md#decision-v03)); the chain's results on the stored benchmark data are in [docs/validation.md](docs/validation.md).
 
 ## How it works
 
@@ -43,7 +43,7 @@ Example of what the model sees:
 ## Requirements
 
 - Hermes Agent ≥ 0.21, tested with v0.21.6.
-- Keys for the page-fetch services. Every stage is optional: a stage without its key is skipped, and the plugin reports itself available as long as a keyed stage of the order can run: Bright Data, Firecrawl, Keenable, or Tavily when the order names it.
+- Keys for the page-fetch services. Every stage is optional: a stage without its key is skipped, and the plugin reports itself available as long as a keyed stage of the order can run: Bright Data (key and zone), Firecrawl, Keenable, or Tavily when the order names it.
   - [Jina Reader](https://jina.ai/reader/): works without a key at 20 requests per minute; a key raises the limit.
   - [Bright Data](https://brightdata.com) Web Unlocker: an API key and the name of a Web Unlocker zone created in Bright Data's control panel.
   - [Firecrawl](https://firecrawl.dev): scraping API with a browser and proxies.
@@ -216,7 +216,7 @@ uv run pytest
 | `scripts/replay.py` | Maintainer only: replays the chain on stored single-provider results of the web benchmark; needs the raw page texts, which are not published |
 | `scripts/live_check.py` | Calls Hermes' real `web_extract` path in a test profile, without an LLM and with rate limiting |
 | `docs/` | [evaluation](docs/evaluation.md) (provider choice), [design](docs/design.md), [validation](docs/validation.md), [troubleshooting](docs/troubleshooting.md), `reviews/` |
-| `data/` | Test data of v0.1–v0.2 without article texts: URL lists and per-URL results as CSV |
+| `data/` | Test data of the v0.1–v0.2 tests (history) without article texts: URL lists and per-URL results as CSV (not the web benchmark v2 data) |
 | `.github/workflows/ci.yml` | CI: ruff and pytest on Python 3.11 and 3.14 |
 | `CHANGELOG.md` | Changes per release |
 

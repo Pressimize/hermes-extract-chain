@@ -17,7 +17,7 @@ This plugin registers its own extract provider that chains four services per URL
 
 The aim is as many complete results as possible; saving credits comes second. Escalating once too often costs requests, escalating once too rarely costs a result (D29).
 
-**Why these four, in this order:** web benchmark v2 on 2026-10-17/18 ([evaluation.md](evaluation.md#web-benchmark-v2-2026-10-1718)), a second, harder benchmark set, and the decisions D26–D34. The choice of the v0.1–v0.2 chain (TinyFish → Firecrawl → Keenable) is in the same file.
+**Why these four, in this order:** web benchmark v2 on 2026-10-17/18 ([evaluation.md](evaluation.md#web-benchmark-v2-2026-10-1718)), a second, harder benchmark set, and the decisions D26–D34; overview in [evaluation.md, Decision (v0.3)](evaluation.md#decision-v03). The earlier choice of the v0.1–v0.2 chain (TinyFish → Firecrawl → Keenable) is kept in the same file as history.
 
 ## 2. Non-goals
 
@@ -128,7 +128,7 @@ A result classified `ok` or `thin` is checked before it is taken (N7, D29). The 
 - **C2** `print`: a marker of `SUSPECT_PRINT` (`dieser ausdruck wurde am`, `ausdruck erstellt`) in the first 5,000 characters of the visible text: a print view, usually cut short (N7.2).
 - **C3** `check`: visible text shorter than 3,000 characters with a marker of `SUSPECT_JS` (`turn on javascript`, `enable javascript`, `javascript (is )?(disabled|required)`, `aktivieren sie javascript`) or `SUSPECT_CHECK` (`just a moment`, `nur einen moment`, `verify you are human`, `captcha`, `access denied`, `pardon our interruption`, `zugriff verweigert`, `sicherheitsüberprüfung`, `security check`, `checking your browser`) (N7.3). A result kept for C3 is the last candidate of the fallback (K8).
 - **C4** `consent`: visible text shorter than 1,500 characters with at least 2 words that contain `cookie`, `consent`, `zustimm` or `einwillig` (words, not different markers; a hyphenated compound such as "Cookie-Zustimmung" is one word, since 0.3.2) (N7.4).
-- **C5** `shorter`: Keenable's reference copy (K3) has no error and its visible text is at least `REFERENCE_FACTOR` = 1.5 times as long. Not for Keenable itself; without a reference the check is off (N7.5).
+- **C5** `shorter`: Keenable's reference copy (K3) is usable (class `ok` or `thin`) and its visible text is at least `REFERENCE_FACTOR` = 1.5 times as long. Not for Keenable itself; without a reference the check is off (N7.5).
 
 No title comparison: it made no difference in the benchmark.
 
@@ -205,7 +205,7 @@ No title comparison: it made no difference in the benchmark.
 ## 11. Logging
 
 - **L1** Logger `logging.getLogger(__name__)`. For each URL that reaches the chain, one INFO line (N20): `extract-chain <host>: <stage>=<outcome> … keenable=<outcome>`, e.g. `extract-chain www.example.com: jina=suspect_shorter brightdata=ok keenable=ref_ok`.
-  - Every stage that was asked or skipped is listed in order; Keenable is always listed, last.
+  - Every stage that was asked or skipped is listed in order; Keenable is always listed, last. After an interrupt (S8) the stages between the interrupted one and Keenable are not listed.
   - The outcome is the class from section 6 (`ok`, `paywall`, `wall`, `empty`, `challenge`; a `thin` result always shows as `suspect_thin`, because C1 applies to it), a check (`suspect_thin`, `suspect_print`, `suspect_check`, `suspect_consent`, `suspect_shorter`), or for errors a short code:
     - `api_<status>` (API of Bright Data, Jina, Firecrawl, Tavily), `http_<status>` (Keenable);
     - `brd_<code>` (Bright Data Unlocker error, A1);
@@ -242,7 +242,7 @@ See also [troubleshooting.md](troubleshooting.md), section *Edge cases*.
 - A pause (K7) does not notice a top-up. After adding credits, the stage is used again when the pause ends or Hermes is restarted. The pauses rest on the providers' documentation; no real quota reply was available for a test. What Bright Data answers when its free monthly allowance is used up without a payment method is not documented; if it is no code of K7, every URL costs one failing Bright Data request until the month renews.
 - Hermes caches successful results with their notes for `web.cache_ttl_minutes` (default 20), including a consent page returned with V5.
 - Privacy: every URL is sent to Keenable and to the first stage of the order (Jina by default), and, depending on the outcome, to the later stages (Tavily only if the order names it). Hermes refuses URLs that contain secrets before any provider sees them.
-- The plugin imports two modules from inside Hermes, `agent.web_search_provider` and `tools.website_policy`, and reads `web.extract_timeout` via `tools.web_tools`. If a Hermes update moves the first, the plugin does not load; without the second it refuses every URL (S7); without the third the budget falls back to 110 s (Z1).
+- The plugin uses four modules from inside Hermes: `agent.web_search_provider`, `tools.website_policy`, `tools.web_tools` (for `web.extract_timeout`) and `tools.interrupt`. If a Hermes update moves `agent.web_search_provider`, the plugin does not load; without `tools.website_policy` it refuses every URL (S7); without `tools.web_tools` the budget falls back to 110 s (Z1); without `tools.interrupt` it sees no interrupt (S8).
 
 ## 14. Decisions
 
@@ -274,7 +274,7 @@ See also [troubleshooting.md](troubleshooting.md), section *Edge cases*.
 | D24 | No switch for the provider order in v0.2.5. **Superseded in 0.3.0** (D27) | Asked for job listings, where TinyFish returns no links; decided to wait and see what E7 and E8 already fix. |
 | D25 | A bot-check page without alternative is returned with a note, like a consent wall (V5), not as an error | The marker list can match a real short page. |
 | D26 | TinyFish removed (0.3.0) | In web benchmark v2 (132 pages) no chain gained from TinyFish at any position; as first stage it ended the chain on failures it did not report. It fails on most pages with bot protection, and returning only the main content makes it look short against any reference. |
-| D27 | Stage order configurable via `EXTRACT_CHAIN_ORDER`; Keenable always last (K1) | Bright Data first and Jina first were close in the benchmark model (118 and 117 complete), Jina first being faster; a further measurement decides, and a setting avoids a release for it. The further measurement came in D34: Jina first is the default. Keenable reports its failures worst of all providers and is the reference (K3), so nothing comes after it. |
+| D27 | Stage order configurable via `EXTRACT_CHAIN_ORDER`; Keenable always last (K1) | Bright Data first and Jina first were close in the benchmark model (118 and 117 complete), Jina first being faster; a further measurement was to decide, and a setting avoided a release for it. That measurement is D34: Jina first is the default. Keenable reports its failures worst of all providers and is the reference (K3), so nothing comes after it. |
 | D28 | Keenable asked for every URL at the start, in parallel, as reference (K3) | The length comparison (C5) carries most of the gain of the checks; the text patterns alone added little on the benchmark pages. Running in parallel costs no time; it costs one Keenable request per URL from a large free allowance. |
 | D29 | A result that fails a check (C1–C5) moves the chain on instead of ending it (K4) | The goal is the most complete results; a false alarm costs requests, not a result. Measured false alarms on complete results: Bright Data 6 %, Jina 1 %, Firecrawl 8 %, Tavily 1 %. A short live page now yields to a longer later result, Keenable's copy included (supersedes D23); the source note says the copy may be older. |
 | D30 | When no stage passes, the longest kept result, the earlier on a tie; results with a bot-check hint last (K8) | Asking every stage and picking the longest result measured worse than stopping at the first result that passes the checks; the order is the better filter, the length only the fallback. A bot-check hint is a stronger sign of a wrong page than shortness. |
