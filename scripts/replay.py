@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from extract_chain import chain  # noqa: E402
 from extract_chain.chain import Stage, run_chain  # noqa: E402
-from extract_chain.fetchers import is_pdf, jina_text_at  # noqa: E402
+from extract_chain.fetchers import is_pdf, jina_doc  # noqa: E402
 
 NAMES = {
     "brightdata": "Bright Data",
@@ -50,6 +50,12 @@ def load(path: Path) -> dict[str, dict]:
     return {row["id"]: row for row in rows}
 
 
+def jina_text_at(text: str) -> int | None:
+    """Stored text replies of Jina up to 0.3.2 (sets 1 and 2): where the page text starts after the header block."""
+    end = text.find("Markdown Content:", 0, 4000)
+    return end + len("Markdown Content:") if end >= 0 else None
+
+
 def jina_head(text: str) -> str:
     end = text.find("Markdown Content:", 0, 4000)
     return text[:end] if end >= 0 else ""
@@ -64,11 +70,14 @@ def as_fetched(provider: str, row: dict | None) -> dict:
         if m := _TARGET.fullmatch(str(row.get("code") or "")):
             failed["target_status"] = int(m.group(1))
         return failed
+    if provider == "jina" and "links" in row:  # A7: a stored JSON reply (set 3), read by the fetcher's own code
+        data = {k: row.get(k) for k in ("title", "links", "httpStatus")}
+        return jina_doc({"data": {**data, "text": row.get("content")}})
     doc = {"title": row.get("title") or "", "content": row.get("content") or ""}
     doc["final_url"] = None if provider in NO_FINAL_URL else row.get("final_url")
     if provider == "brightdata" and is_pdf(doc["content"]):  # A1, D39: as the fetcher
         return {"error": "Bright Data: PDF file, not text", "code": "pdf"}
-    if provider == "jina":  # N12: a warning about the target page in the header block is an error
+    if provider == "jina":  # stored text reply up to 0.3.2: a warning in the header block is an error
         warning = _JINA_WARNING.search(jina_head(doc["content"]))
         if warning and int(warning.group(1)) >= 400:
             status = int(warning.group(1))

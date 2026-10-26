@@ -3,7 +3,8 @@
 
 Every function fetches one URL, takes the time it may use (``deadline``, seconds) and never raises. A result is
 ``{"title", "content", "final_url"}`` plus optional ``target_status`` (int, status of the target page) and
-``pdf_pages``, and for Jina ``text_at`` (where the page text starts after the header lines, E2). A failure is
+``pdf_pages``, and for Jina ``links`` (the page's link list, V16a) and ``text_at`` (where the page text starts after
+the title line, E2). A failure is
 ``{"error": "<Provider>: <detail>", "code": "<short code>"}``; the code appears in the log line (L1).
 ``target_status`` is set on failures of the target page, ``quota: True`` when the provider's own API
 reports a used-up quota or a blocked account (K7: only that starts a pause, never the status of a target page).
@@ -53,10 +54,8 @@ TAVILY_QUOTA_STATUS = frozenset({402, 432, 433})  # 432: plan limit, 433: pay-as
 BRIGHTDATA_QUOTA_CODES = frozenset({"client_10020", "client_10100", "client_10002"})  # account, zone limit, zone
 _BRD_ERROR_HEADERS = ("x-brd-error", "x-brd-error-code", "x-brd-err-code")
 
-_JINA_HEAD_END = "Markdown Content:"
-_JINA_HEAD_MAX = 4000  # the header block is short; nothing after this is read as a header
-_JINA_WARNING = re.compile(r"^Warning: Target URL returned error (\d{3})", re.MULTILINE)
-_JINA_TITLE = re.compile(r"^Title: ?(.*)$", re.MULTILINE)
+# A7, D40: text with the page's link list, as measured on 2026-10-26.
+JINA_HEADERS = {"Accept": "application/json", "X-Return-Format": "text", "X-With-Links-Summary": "all"}
 _CODE = re.compile(r"[a-z0-9_]{1,40}")
 
 
@@ -176,40 +175,50 @@ async def brightdata(client: httpx.AsyncClient, url: str, key: str, zone: str, *
         return _error("Bright Data", _describe(exc), _describe(exc))
 
 
-def _jina_head(text: str) -> str:
-    end = text.find(_JINA_HEAD_END, 0, _JINA_HEAD_MAX)
-    return text[:end] if end >= 0 else ""
+def _pairs(links: object) -> list[tuple[str, str]]:
+    """A7: Jina's link list as (text, url) pairs; a list of pairs or an object from text to URL (older form)."""
+    items = links.items() if isinstance(links, dict) else links if isinstance(links, list) else ()
+    return [
+        (item[0], item[1])
+        for item in items
+        if isinstance(item, list | tuple) and len(item) == 2 and all(isinstance(v, str) for v in item)
+    ]
 
 
-def jina_text_at(text: str) -> int | None:
-    """E2, A7: where the page text starts after Jina's header block, or None without one. Lengths are measured from
-    there; markers are still searched in the whole text."""
-    end = text.find(_JINA_HEAD_END, 0, _JINA_HEAD_MAX)
-    return end + len(_JINA_HEAD_END) if end >= 0 else None
+def jina_doc(payload: dict) -> dict:
+    """A7: the fetcher's result from Jina's JSON reply (also used by the replay). A title goes in front of the text
+    as "Title: <title>" and a blank line, so that markers in the title still count (D37); text_at is where the page
+    text starts (E2). data.url is the requested URL, not a final URL."""
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return _error("Jina", "malformed reply", "malformed")
+    status = data.get("httpStatus")
+    if isinstance(status, int) and not isinstance(status, bool) and status >= 400:
+        return _target("Jina", status)
+    text = data.get("text")
+    if text is None:
+        text = ""
+    if not isinstance(text, str):
+        return _error("Jina", "malformed reply", "malformed")
+    title = " ".join(data["title"].split()) if isinstance(data.get("title"), str) else ""
+    doc = {"title": title, "content": text, "final_url": None, "links": _pairs(data.get("links"))}
+    if title:
+        head = f"Title: {title}\n\n"
+        doc["content"] = head + text
+        doc["text_at"] = len(head)
+    return doc
 
 
 async def jina(client: httpx.AsyncClient, url: str, key: str, *, deadline: float) -> dict:
-    """N12: Reader. The text keeps the header lines (as measured); only the header block before "Markdown
-    Content:" is read: Title, and a Warning about an error status of the target page. URL Source is the requested
-    URL, not a final URL."""
-    headers = {"X-Return-Format": "markdown", "Accept": "text/plain"}
+    """N12, A7: Reader as JSON with text and the page's link list (D40)."""
+    headers = dict(JINA_HEADERS)
     if key:
         headers["Authorization"] = f"Bearer {key}"
     try:
         response = await _request(client, deadline, "GET", JINA_URL + url, headers=headers)
         if response.status_code >= 300:
             return _api_error("Jina", response, key, QUOTA_STATUS)
-        text = response.text
-        head = _jina_head(text)
-        if warning := _JINA_WARNING.search(head):
-            status = int(warning.group(1))
-            if status >= 400:
-                return _target("Jina", status)
-        title = _JINA_TITLE.search(head)
-        doc = {"title": title.group(1).strip() if title else "", "content": text, "final_url": None}
-        if (text_at := jina_text_at(text)) is not None:
-            doc["text_at"] = text_at
-        return doc
+        return jina_doc(_json(response))
     except Exception as exc:
         return _error("Jina", _describe(exc), _describe(exc))
 

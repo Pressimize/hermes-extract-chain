@@ -1,6 +1,6 @@
 # Troubleshooting
 
-How failures show up, what the log line means, typical problems with their fixes, and the edge cases the plugin handles on purpose. Requirement IDs refer to [design.md](design.md). This file describes the current chain (0.3.x); for the TinyFish chain of v0.1–v0.2 see the file at tag `v0.2.6`.
+How failures show up, what the log line means, typical problems with their fixes, and the edge cases the plugin handles on purpose. Requirement IDs refer to [design.md](design.md). This file describes the current chain (0.4.x); for the TinyFish chain of v0.1–v0.2 see the file at tag `v0.2.6`.
 
 ## Where to look
 
@@ -173,6 +173,7 @@ The counts per stage in the log show which sites cause it.
 | Missing key of one stage | That stage is skipped (`no_key`). |
 | User stops the turn | No further requests: the next stage reports `interrupted`, the stages after it are skipped and not listed in the log, and a wait for Keenable ends within a second. A Keenable copy that has already arrived is still used (S8). |
 | Hermes timeout | All URLs of the call fail, also those that had finished (Hermes discards the whole call). |
+| ` <https://…>` in the text, no images, no headings from Jina | By design (V16): Jina's text is plain text with each link address after its link text; Markdown of the other services loses its images, and its links become `text <url>`. Link texts shorter than 4 characters get no address. Shorter results fit more of the page into Hermes' cut (`web.extract_char_limit`). |
 
 Paywalls (detected or not, English ones), the Hermes cache and privacy: [design.md, section 13](design.md#13-known-limitations).
 

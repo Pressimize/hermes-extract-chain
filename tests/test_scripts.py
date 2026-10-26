@@ -64,11 +64,47 @@ def test_as_fetched_brightdata_pdf_as_the_fetcher():  # A1, D39
     assert replay.as_fetched("jina", {"content": pdf})["content"] == pdf  # only Bright Data passes the raw file on
 
 
-def test_as_fetched_jina_text_at_as_the_fetcher():  # E2, D37: lengths without the header lines in the replay too
+def test_as_fetched_legacy_text_reply_gets_text_at():  # E2, D37, T2: stored text replies stay readable
     text = "Title: x\n\nMarkdown Content:\n" + ARTICLE
-    assert replay.as_fetched("jina", {"content": text})["text_at"] == fetchers.jina_text_at(text) == 27
+    assert replay.jina_text_at(text) == 27
+    assert replay.as_fetched("jina", {"content": text})["text_at"] == 27
+    assert replay.jina_text_at("x" * 3983 + "Markdown Content:") == 4000  # still inside the header block
+    assert replay.jina_text_at("x" * 3984 + "Markdown Content:") is None
     assert "text_at" not in replay.as_fetched("jina", {"content": ARTICLE})
+    assert "links" not in replay.as_fetched("jina", {"content": text})  # no link list: V16b later
     assert "text_at" not in replay.as_fetched("keenable", {"content": text})  # only Jina has header lines
+
+
+LINKS = [["Ein ganz normaler", "https://h.example/1"], ["Sätzen", "https://h.example/2"]]
+
+
+def test_as_fetched_json_row_goes_through_jina_doc():  # A7, T2: a stored JSON reply (a row with links)
+    row = {"id": "c1", "title": "Ein Titel", "content": ARTICLE, "links": LINKS}
+    expected = fetchers.jina_doc({"data": {"title": "Ein Titel", "text": ARTICLE, "links": LINKS}})
+    out = replay.as_fetched("jina", row)
+    assert out == expected
+    assert out["content"] == "Title: Ein Titel\n\n" + ARTICLE and out["text_at"] == len("Title: Ein Titel\n\n")
+    assert out["links"] == [(t, u) for t, u in LINKS]
+
+
+def test_as_fetched_json_row_without_title_and_with_empty_links():  # A7
+    out = replay.as_fetched("jina", {"content": ARTICLE, "links": []})
+    assert out == {"title": "", "content": ARTICLE, "final_url": None, "links": []}
+
+
+def test_as_fetched_json_row_with_http_status_is_a_target_error():  # A7
+    out = replay.as_fetched("jina", {"content": "Nicht gefunden", "links": [], "httpStatus": 404})
+    assert out == {"error": "Jina: target HTTP 404", "code": "target_404", "target_status": 404}
+    assert "error" not in replay.as_fetched("jina", {"content": ARTICLE, "links": [], "httpStatus": 399})
+
+
+def test_as_fetched_json_row_with_non_string_text_is_malformed():  # A7
+    assert replay.as_fetched("jina", {"content": 5, "links": []})["code"] == "malformed"
+
+
+def test_as_fetched_links_key_is_read_for_jina_only():  # T2: other providers keep their rows as they are
+    row = {"content": ARTICLE, "links": LINKS}
+    assert "links" not in replay.as_fetched("keenable", row)
 
 
 def test_replay_names_the_source_stage():  # N23
@@ -123,3 +159,24 @@ def test_readme_lists_every_note():  # N17-N19: the README table must follow cha
         if name.startswith("NOTE_") and isinstance(text, str):
             fragments = re.split(r"\{[^}]*\}", text.removeprefix("[extract-chain] "))
             assert [f.strip() for f in fragments if f.strip() and f.strip() not in readme] == [], name
+
+
+def test_replay_json_row_is_shaped_with_addresses():  # A7, V16a, T2: set 3 rows give the text the model sees
+    order = ["jina", "keenable"]
+    data = {
+        "jina": {"c1": {"id": "c1", "title": "T", "content": ARTICLE, "links": LINKS}},
+        "keenable": {"c1": {"id": "c1", "content": ARTICLE}},
+    }
+    source, result = replay.replay(order, data, "c1")
+    assert source == "jina"
+    assert result["content"].startswith("Title: T\n\n")
+    assert "Ein ganz normaler <https://h.example/1>" in result["content"]
+    assert "Sätzen <https://h.example/2>" in result["content"]
+
+
+def test_replay_legacy_text_row_is_shaped_as_markdown():  # V16b, T2: sets 1 and 2 hold Markdown
+    text = "Title: x\n\nMarkdown Content:\n" + ARTICLE + " [Apply now](https://x.example/a) ![i](p.png)"
+    data = {"jina": {"c1": {"id": "c1", "content": text}}, "keenable": {"c1": {"id": "c1", "content": ARTICLE}}}
+    source, result = replay.replay(["jina", "keenable"], data, "c1")
+    assert source == "jina" and "Apply now <https://x.example/a>" in result["content"]
+    assert "![i]" not in result["content"]

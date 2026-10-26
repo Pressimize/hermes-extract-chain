@@ -28,6 +28,7 @@ Per URL:
 3. Each result is classified: an error, an empty page, a bot-check page or a consent wall moves on to the next stage. A paywall ends the chain with a note; no further provider is asked.
 4. A result that looks fine is checked. It is *suspect* if it is very short, a print view, a short page with a JavaScript or bot-check hint, a short page full of consent text, or if Keenable's copy is at least 1.5 times as long. A suspect result is kept, and the next stage is asked.
 5. The first result that passes is returned. If none passes, the longest kept result is returned with a note; otherwise a consent-wall or bot-check page with a note; otherwise one error listing every reason, e.g. `Jina: target HTTP 403; Bright Data: target HTTP 403; Firecrawl: target HTTP 403; Keenable: Gateway timeout`.
+6. The returned text is made compact, because Hermes cuts every result to `web.extract_char_limit` (15,000 characters by default): Jina delivers plain text and its link list, and the plugin puts each link address right after its link text (`Apply now <https://…>`); Markdown from the other services loses its images, and its links become `text <url>`. Link texts shorter than 4 characters get no address. The checks above run on the services' own text.
 
 Each provider is asked at most once per URL; URLs of one call run concurrently. Rules in detail: [design.md, section 5](docs/design.md#5-chain-per-url).
 
@@ -37,8 +38,10 @@ Example of what the model sees:
 [extract-chain] Live fetch via Bright Data (Jina: shorter than the reference copy).
 
 # Article title
-…
+…the full report <https://example.com/report> is online…
 ```
+
+Why plain text with addresses: on 458 pages, the full article was within Hermes' default cut on 298 pages with it, on 222 with Jina's Markdown; agents following a link of a fetched page found its address in 34 of 39 cases, as with Markdown (plain text without addresses: 1). Details: [design.md, D40](docs/design.md#14-decisions).
 
 ## Requirements
 
@@ -177,6 +180,7 @@ Vendor terms as of 2026-10-18; check the vendors' pages before relying on them.
 - **Paywalls are not bypassed.** Many paywalled teasers carry no marker; they are returned as normal text.
 - **Keyword and length rules.** Wall, paywall and bot-check detection uses marker phrases tuned on German news sites; the checks use lengths and Keenable's copy. A partial result that passes every check ends the chain.
 - **Copies** (Keenable, and Tavily if enabled) can be older than the live page; the note says so.
+- **Jina's text has no Markdown structure** (headings, lists and tables become plain lines). Link addresses are placed by searching the link text; a link whose text is not found, or after the first 500 links, has no address.
 - **No final URL** from Jina, Bright Data and Tavily: redirects through them are not noted, and the blocklist sees only the input URL.
 
 The full list: [design.md, section 13](docs/design.md#13-known-limitations). Edge cases and failure behaviour: [docs/troubleshooting.md](docs/troubleshooting.md).
@@ -211,7 +215,7 @@ uv run pytest
 
 | Path | Content |
 |---|---|
-| `extract_chain/` | The plugin: `provider.py` (Hermes interface, order, budget, pauses), `chain.py` (classification, checks, chain, notes), `fetchers.py` (REST clients) |
+| `extract_chain/` | The plugin: `provider.py` (Hermes interface, order, budget, pauses), `chain.py` (classification, checks, chain, notes), `fetchers.py` (REST clients), `shape.py` (link addresses and images in the returned text) |
 | `tests/` | Unit tests without network (`httpx.MockTransport`; Hermes is stubbed in `conftest.py`) |
 | `scripts/replay.py` | Maintainer only: replays the chain on stored single-provider results of the web benchmark; needs the raw page texts, which are not published |
 | `scripts/live_check.py` | Calls Hermes' real `web_extract` path in a test profile, without an LLM and with rate limiting |

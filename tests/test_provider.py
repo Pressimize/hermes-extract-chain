@@ -48,8 +48,9 @@ def bd_ok(content=ARTICLE, status=200, headers=None):
     return lambda r: httpx.Response(200, json={"status_code": status, "headers": headers or {}, "body": content})
 
 
-def jina_ok(content=ARTICLE):
-    return lambda r: httpx.Response(200, text=f"Title: J\nURL Source: {URL}\n\nMarkdown Content:\n{content}")
+def jina_ok(content=ARTICLE, links=()):
+    page = {"data": {"title": "J", "url": URL, "text": content, "links": [list(link) for link in links]}}
+    return lambda r: httpx.Response(200, json=page)
 
 
 def fc_ok(content=ARTICLE, **meta):
@@ -132,7 +133,7 @@ def test_manifest_and_register():  # S1, N4
 
 def test_version_is_the_same_in_both_files():  # N21, P1
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    assert manifest()["version"] == project["version"] == "0.3.2"
+    assert manifest()["version"] == project["version"] == "0.4.0"
 
 
 def test_display_name_names_the_chain():  # N1
@@ -910,3 +911,23 @@ def test_default_order_without_setting(env):  # N2, D34: Jina, Bright Data, Fire
     out = extract(api, [URL])
     assert api.asked() == ["jina", "brightdata", "firecrawl"] and api.keenable() == 1
     assert "Tavily" not in out[0]["error"]
+
+
+def test_jina_request_and_shaped_result_end_to_end(
+    env,
+):  # A7, V16a, S4: JSON headers out, addresses in the returned text
+    del env["JINA_API_KEY"]
+    api = Api(jina=jina_ok(ARTICLE + " Jetzt bewerben", links=[("Jetzt bewerben", "https://a.example/job")]))
+    out = extract(api, [URL])
+    request = next(r for r in api.requests if r.url.host == "r.jina.ai")
+    assert request.headers["accept"] == "application/json" and request.headers["x-return-format"] == "text"
+    assert request.headers["x-with-links-summary"] == "all"
+    assert "Jetzt bewerben <https://a.example/job>" in out[0]["content"]
+    assert "Title: J\n\n" + ARTICLE in out[0]["content"]  # the title line stays in the text
+
+
+def test_markdown_provider_result_is_shaped_end_to_end(env):  # V16b, S4
+    api = Api(brightdata=bd_ok(ARTICLE + " [Jetzt bewerben](https://a.example/job) ![x](p.png)"), jina=down)
+    env["EXTRACT_CHAIN_ORDER"] = "brightdata,jina"
+    out = extract(api, [URL])
+    assert "Jetzt bewerben <https://a.example/job>" in out[0]["content"] and "![x]" not in out[0]["content"]

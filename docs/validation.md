@@ -16,10 +16,33 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 - **v0.3.0:** unit tests; replay on the data of web benchmark v2, two sets (section *v0.3.0*); live check of 20 pages on 2026-10-19.
 - **v0.3.1:** unit tests; replay on the same two sets, compared page by page with v0.3.0 (section *v0.3.1*); no new live check (no change to the requests).
 - **v0.3.2:** unit tests; replay in the default order and with Bright Data first, page by page against v0.3.1; a probe of Bright Data with three requests (section *v0.3.2*).
+- **v0.4.0:** unit tests; replay of sets 1 and 2 page by page against v0.3.2, and set 3 (Jina's JSON replies, graded within Hermes' cut) (section *v0.4.0*).
 
 ## T1 – Unit tests
 
 `uv run pytest`: all tests pass without network access, locally (Python 3.14) and in CI (Python 3.11 and 3.14).
+
+## v0.4.0
+
+### T1 – Unit tests
+
+672 tests (v0.3.2: 453), ruff clean. Jina's JSON reply (A7) replaces the tests of the old header block; the replay keeps its tests for the stored text replies. New: every filter, candidate and search rule of V16a with its bounds, every pattern and bound of V16b, the fence rule, `shape()` never raising, shaping only of the returned text (D41) with notes in front, C5 on lengths without addresses (D43), and timing guards (3 MB of unclosed brackets 0.1 s; 10,000 links in 200,000 characters; the 1 s limit of V16a). A final review ran 73 single-change mutants against the suite: 62 were caught; the 6 real gaps (link text with regex characters, upper-case scheme, a fence after a no-break space, the whitespace and parenthesis bounds) now have tests, the other 5 are equivalent. The same review found the 45 s case that led to the time limit of V16a (D42).
+
+### T2 – Replay
+
+**Sets 1 and 2** (stored Jina replies are the old text replies, read as before): default order unchanged in the counts, set 1 116 / 8 / 7 / 1, set 2 171 / 8 / 18 / 0. Page by page against v0.3.2 (stage, notes, error text), only C5 (D43) changes something: on 3 pages Bright Data supplies the result instead of Jina or Keenable, complete before and after. With `EXTRACT_CHAIN_ORDER=brightdata,jina,firecrawl,keenable`, set 2: 161 / 8 / 28 instead of 162 / 8 / 27.
+
+**Set 3** (458 pages with ground truth of 2026-10-26; Jina's JSON replies with link list and Keenable's copies of the same day; no Bright Data or Firecrawl results stored, so the chain is Jina → Keenable). The returned text is graded as the model sees it: after V16, notes included, cut by Hermes to 15,000 or 20,000 characters (75 % head, 25 % tail); the inserted ` <url>` are removed for grading only. Against v0.3.2 with Jina's Markdown of the same day:
+
+| | Complete before the cut | within 15,000 | within 20,000 | Tokens within 15,000 / 20,000 (mean) |
+|---|---|---|---|---|
+| v0.3.2 (Jina Markdown) | 386 | 244 | 274 | 3,304 / 4,059 |
+| **v0.4.0** | 383 | **314** | **336** | 2,560 / 2,969 |
+
+- Paired: before the cut +14 / −17 (p = 0.72), within 15,000 +79 / −9, within 20,000 +74 / −12 (both p < 0.001). **T2 accepted.**
+- Jina supplied the result on 346 pages (v0.3.2: 372); without D43 it was 317, because C5 fired on 42 complete Jina texts against Keenable's Markdown with its addresses.
+- Of 39 links that agents had followed from a fetched page and that were still on it, 34 were visible in the agent's cut (its own `char_limit`, else 15,000) with v0.4.0 and with v0.3.2.
+- The chain took 10 ms per page in the median, 0.6 s at most (shaping included).
 
 ## v0.3.2
 
