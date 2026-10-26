@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-from extract_chain import fetchers
+from extract_chain import chain, fetchers
 
 U = "https://a.example/x"
 
@@ -203,53 +203,169 @@ def test_is_pdf(text, pdf):  # A1, D39: only the file header at the start
 # --- N12 Jina --------------------------------------------------------------------------------------
 
 
-def jina_text(body="Der Artikeltext.", head="Title: Ein Titel\nURL Source: https://a.example/x\n"):
-    return f"{head}\nMarkdown Content:\n{body}"
+def jina_reply(text="Der Artikeltext.", status=200, **data):
+    return httpx.Response(status, json={"code": 200, "status": 20000, "data": {"text": text, **data}})
 
 
-def test_jina_request():  # N12: query string appended unchanged, header as measured
-    handler, seen = recorder(httpx.Response(200, text=jina_text()))
+def jina_fetch(response, key="jn-key"):
+    return call(fetchers.jina, reply(response), U, key)
+
+
+def test_jina_request():  # N12, A7: query string appended unchanged, JSON with text and link list
+    handler, seen = recorder(jina_reply())
     url = "https://a.example/x?q=a%20b&page=2"
     call(fetchers.jina, handler, url, "jn-key")
     request = seen[0]
     assert (request.method, str(request.url)) == ("GET", "https://r.jina.ai/" + url)
-    assert request.headers["accept"] == "text/plain" and request.headers["x-return-format"] == "markdown"
+    assert request.headers["accept"] == "application/json" and request.headers["x-return-format"] == "text"
+    assert request.headers["x-with-links-summary"] == "all"
     assert request.headers["authorization"] == "Bearer jn-key"
 
 
-def test_jina_without_key_sends_no_authorization():  # N3, N12
-    handler, seen = recorder(httpx.Response(200, text=jina_text()))
+def test_jina_without_key_sends_no_authorization():  # N3, A7: the other headers stay
+    handler, seen = recorder(jina_reply())
     call(fetchers.jina, handler, U, "")
     assert "authorization" not in seen[0].headers
+    assert seen[0].headers["accept"] == "application/json" and seen[0].headers["x-with-links-summary"] == "all"
 
 
-def test_jina_success_keeps_the_header_lines():  # N12: the text stays as measured, the title comes from the header
-    text = jina_text(head="Title: Ein Titel\nURL Source: https://other.example/y\nPublished Time: 2026\n")
-    out = call(fetchers.jina, reply(httpx.Response(200, text=text)), U, "jn-key")
-    at = text.index("Markdown Content:") + len("Markdown Content:")  # E2, D37: where the page text starts
-    assert out == {"title": "Ein Titel", "content": text, "final_url": None, "text_at": at}  # no final URL
-    assert text[out["text_at"] :].lstrip().startswith(text.split("Markdown Content:")[1].lstrip()[:10])
+def test_jina_headers_constant_is_not_changed_by_a_key():  # A7: the key goes into a copy
+    call(fetchers.jina, reply(jina_reply()), U, "jn-key")
+    assert "Authorization" not in fetchers.JINA_HEADERS
 
 
-@pytest.mark.parametrize("status", [403, 404, 410, 422])
-def test_jina_warning_line_is_the_target_status(status):  # N12
-    head = f"Title: Not found\nURL Source: {U}\nWarning: Target URL returned error {status}: Not Found\n"
-    out = call(fetchers.jina, reply(httpx.Response(200, text=jina_text(head=head))), U, "jn-key")
+def test_jina_success_without_title():  # A7: the content is the page text alone, no text_at
+    out = jina_fetch(jina_reply("Der Artikeltext.", title=""))
+    assert out == {"title": "", "content": "Der Artikeltext.", "final_url": None, "links": []}
+
+
+def test_jina_title_line_in_front_and_text_at():  # A7, E2, D37
+    out = jina_fetch(jina_reply("Der Artikeltext.", title="Ein Titel"))
+    head = "Title: Ein Titel\n\n"
+    assert out == {
+        "title": "Ein Titel",
+        "content": head + "Der Artikeltext.",
+        "final_url": None,  # data.url is the requested URL, not a final URL
+        "links": [],
+        "text_at": len(head),
+    }
+
+
+def test_jina_final_url_is_not_taken_from_data_url():  # A7
+    assert jina_fetch(jina_reply(url="https://other.example/y"))["final_url"] is None
+
+
+def test_jina_title_whitespace_is_collapsed_to_one_line():  # A7
+    out = jina_fetch(jina_reply("Text", title="  Ein \n\n Titel\t mit   Raum "))
+    assert out["title"] == "Ein Titel mit Raum" and out["content"] == "Title: Ein Titel mit Raum\n\nText"
+    assert out["text_at"] == len("Title: Ein Titel mit Raum\n\n")
+
+
+@pytest.mark.parametrize("title", ["", "  \n\t ", None, 5, ["T"], {"a": 1}])
+def test_jina_no_usable_title_gives_no_text_at(title):  # A7: a blank or non-string title is no title
+    out = jina_fetch(jina_reply("Text", title=title))
+    assert out["title"] == "" and out["content"] == "Text" and "text_at" not in out
+
+
+def test_jina_missing_title_gives_no_text_at():  # A7
+    assert "text_at" not in jina_fetch(jina_reply("Text"))
+
+
+@pytest.mark.parametrize("data", [{"text": None}, {}])
+def test_jina_text_none_or_missing_is_an_empty_page(data):  # A7, E2
+    out = jina_fetch(httpx.Response(200, json={"data": data}))
+    assert out == {"title": "", "content": "", "final_url": None, "links": []}
+
+
+def test_jina_empty_page_with_title_keeps_the_title_line():  # A7, E2: text_at at the end, the page is empty
+    out = jina_fetch(httpx.Response(200, json={"data": {"title": "T", "text": None}}))
+    assert out["content"] == "Title: T\n\n" and out["text_at"] == len(out["content"])
+    assert chain.classify(out, full_page=True) == "empty"
+
+
+@pytest.mark.parametrize("text", [5, True, ["a"], {"a": "b"}, 1.5])
+def test_jina_text_that_is_no_string_is_malformed(text):  # A7
+    out = jina_fetch(httpx.Response(200, json={"data": {"title": "T", "text": text}}))
+    assert out == {"error": "Jina: malformed reply", "code": "malformed"}
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, json={"data": "text"}),
+        httpx.Response(200, json={"data": [1]}),
+        httpx.Response(200, json={"data": None}),
+        httpx.Response(200, json={}),
+        httpx.Response(200, json=["data"]),
+        httpx.Response(200, json="text"),
+        httpx.Response(200, text="Title: x\n\nMarkdown Content:\nText"),  # the old text reply is no JSON
+        httpx.Response(200, text=""),
+    ],
+)
+def test_jina_reply_without_a_data_object_is_malformed(response):  # A7
+    assert jina_fetch(response) == {"error": "Jina: malformed reply", "code": "malformed"}
+
+
+@pytest.mark.parametrize("status", [403, 404, 410, 422, 500])
+def test_jina_http_status_is_the_target_status(status):  # A7
+    out = jina_fetch(jina_reply("Not found text", title="Not found", httpStatus=status))
     assert out == {"error": f"Jina: target HTTP {status}", "code": f"target_{status}", "target_status": status}
 
 
-def test_jina_header_lines_in_the_page_text_do_not_count():  # N12: only the block before "Markdown Content:"
-    body = "Warning: Target URL returned error 404\nTitle: Fake\nURL Source: https://evil.example/\nText."
-    text = jina_text(body=body, head=f"URL Source: {U}\n")
-    out = call(fetchers.jina, reply(httpx.Response(200, text=text)), U, "jn-key")
-    at = text.index("Markdown Content:") + len("Markdown Content:")
-    assert out == {"title": "", "content": text, "final_url": None, "text_at": at}
+@pytest.mark.parametrize(("status", "failed"), [(200, False), (301, False), (399, False), (400, True)])
+def test_jina_http_status_boundary(status, failed):  # A7: from 400 on the target page failed
+    assert bool(jina_fetch(jina_reply(httpStatus=status)).get("error")) is failed
 
 
-def test_jina_without_header_block_reads_no_header():  # N12: no "Markdown Content:", nothing is a header
-    text = "Title: Fake\nWarning: Target URL returned error 404\nText."
-    out = call(fetchers.jina, reply(httpx.Response(200, text=text)), U, "jn-key")
-    assert out == {"title": "", "content": text, "final_url": None}
+@pytest.mark.parametrize("status", [True, False, "404", "400", 404.0, None, [404], {"a": 404}])
+def test_jina_http_status_that_is_no_integer_is_no_status(status):  # A7: bool and strings are not a status
+    out = jina_fetch(jina_reply(httpStatus=status))
+    assert "error" not in out and out["content"] == "Der Artikeltext."
+
+
+def test_jina_http_status_is_checked_before_the_text():  # A7
+    out = jina_fetch(jina_reply(5, httpStatus=404))
+    assert out == {"error": "Jina: target HTTP 404", "code": "target_404", "target_status": 404}
+
+
+def test_jina_links_as_a_list_of_pairs():  # A7
+    links = [["Erster Link", "https://h.example/1"], ["Zweiter Link", "https://h.example/2"]]
+    assert jina_fetch(jina_reply(links=links))["links"] == [(t, u) for t, u in links]
+
+
+def test_jina_links_as_an_object_from_text_to_url():  # A7: the older form
+    out = jina_fetch(jina_reply(links={"Erster Link": "https://h.example/1", "Zweiter": "https://h.example/2", "x": 1}))
+    assert out["links"] == [("Erster Link", "https://h.example/1"), ("Zweiter", "https://h.example/2")]
+
+
+def test_jina_links_with_broken_entries_skip_only_those():  # A7: entries that are no pair of strings
+    links = [
+        ["Gut", "https://h.example/1"],
+        "text",
+        None,
+        5,
+        ["nur eins"],
+        ["a", "b", "c"],
+        [1, "https://h.example/2"],
+        ["Text", 2],
+        ["Text", None],
+        [],
+        {"a": "b"},
+        ["Auch gut", "https://h.example/3"],
+    ]
+    out = jina_fetch(jina_reply(links=links))
+    assert out["links"] == [("Gut", "https://h.example/1"), ("Auch gut", "https://h.example/3")]
+
+
+@pytest.mark.parametrize("links", [None, "text", 5, True])
+def test_jina_links_missing_or_other_value_is_an_empty_list(links):  # A7
+    assert jina_fetch(jina_reply(links=links))["links"] == []
+    assert jina_fetch(jina_reply())["links"] == []
+
+
+def test_jina_links_are_not_filtered_by_the_fetcher():  # A7: V16a filters, the fetcher returns them as sent
+    links = [["ab", "ftp://h.example/"], ["Text", U], ["Text", U]]
+    assert jina_fetch(jina_reply(links=links))["links"] == [(t, u) for t, u in links]
 
 
 def test_jina_api_errors():  # N12, N16: 402 is the API's empty balance, 429 its rate limit
@@ -257,6 +373,16 @@ def test_jina_api_errors():  # N12, N16: 402 is the API's empty balance, 429 its
     assert out == {"error": "Jina: API 402: Insufficient balance", "code": "api_402", "quota": True}
     out = call(fetchers.jina, reply(httpx.Response(429, text="Too many requests")), U, "")
     assert out == {"error": "Jina: API 429: Too many requests", "code": "api_429"}
+    assert "quota" not in out
+
+
+def test_jina_title_marker_still_classifies_and_lengths_start_at_text_at():  # A7, E2, D37
+    out = jina_fetch(jina_reply("Checking connection, please wait. " * 2, title="Just a moment..."))
+    assert chain.classify(out, full_page=True) == "challenge"  # the marker stands in the title line only
+    body = jina_fetch(jina_reply("x" * 450, title="T" * 100))
+    assert chain._length(body) == 450 and chain.classify(body, full_page=True) == "thin"
+    body = jina_fetch(jina_reply("x" * 19, title="T" * 100))
+    assert chain.classify(body, full_page=True) == "empty"
 
 
 # --- A2, N14 Firecrawl -----------------------------------------------------------------------------
@@ -532,26 +658,6 @@ def test_megabyte_error_page_gives_a_short_error():  # A4, N15: page excerpts in
 def test_brightdata_target_status_boundary(status, failed):  # N11 (c): from 400 on the target page failed
     out = call(fetchers.brightdata, reply(bd_reply(status, "# Text")), U, "bd-key", "z")
     assert bool(out.get("error")) is failed
-
-
-@pytest.mark.parametrize(("status", "failed"), [(399, False), (400, True)])
-def test_jina_warning_boundary(status, failed):  # N12: from 400 on the warning is an error of the target page
-    head = f"Title: T\nWarning: Target URL returned error {status}: x\n"
-    out = call(fetchers.jina, reply(httpx.Response(200, text=jina_text(head=head))), U, "jn-key")
-    assert bool(out.get("error")) is failed
-
-
-def test_jina_text_at():  # E2, A7, D37: the position after the first "Markdown Content:" in the first 4,000 characters
-    assert fetchers.jina_text_at("Title: x\n\nMarkdown Content:\nText") == 27
-    assert fetchers.jina_text_at("x" * 3983 + "Markdown Content:") == 4000  # still inside the header block
-    assert fetchers.jina_text_at("x" * 3984 + "Markdown Content:") is None
-    assert fetchers.jina_text_at("Text without header") is None
-
-
-def test_jina_header_block_only_in_the_first_4000_characters():  # N12: a late "Markdown Content:" is page text
-    text = "Warning: Target URL returned error 404\n" + "x" * 4000 + "\nMarkdown Content:\nText"
-    out = call(fetchers.jina, reply(httpx.Response(200, text=text)), U, "jn-key")
-    assert out == {"title": "", "content": text, "final_url": None}
 
 
 def test_brightdata_status_code_as_text():  # N11 (c): documented as a number; a string is read as well

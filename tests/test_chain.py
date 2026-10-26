@@ -735,10 +735,10 @@ def test_failing_interrupt_check_counts_as_none(short_wait):  # S6
     assert out["title"] == "J"  # the reference arrived within the wait and made Bright Data suspect (C5)
 
 
-# --- E2, D37: Jina's header lines do not count towards lengths ------------------------------------------
+# --- E2, D37: the title line of Jina does not count towards lengths ------------------------------------------
 
 
-JINA_HEAD = "Title: Some page\nURL Source: https://news.example/artikel\nPublished Time: 2026\n\nMarkdown Content:\n"
+JINA_HEAD = "Title: Some page\n\n"  # A7: the title line the fetcher puts in front
 
 
 def jina_doc(body, head=JINA_HEAD):
@@ -748,39 +748,39 @@ def jina_doc(body, head=JINA_HEAD):
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
-        ("", "empty"),  # header lines only: empty, not thin
+        ("", "empty"),  # title line only: empty, not thin
         ("x" * 19, "empty"),
         ("x" * 20, "thin"),
-        ("x" * 499, "thin"),  # the header lines would have lifted this above 500
+        ("x" * 499, "thin"),  # the title line would have lifted this above 500
         ("x" * 500, "ok"),
     ],
 )
-def test_jina_lengths_without_header_lines(body, expected):  # E2, E8, D37
+def test_jina_lengths_without_title_line(body, expected):  # E2, E8, D37
     assert classify(jina_doc(body), full_page=True) == expected
 
 
-def test_jina_markers_in_the_header_still_count():  # D37: the title of a bot check says "Just a moment"
+def test_jina_markers_in_the_title_still_count():  # D37: the title of a bot check says "Just a moment"
     page = jina_doc("Checking connection, please wait. " * 2, head=JINA_HEAD.replace("Some page", "Just a moment..."))
     assert classify(page, full_page=True) == "challenge"
 
 
-def test_jina_short_body_is_checked_as_short():  # C1, D37: the reason names the length without header lines
+def test_jina_short_body_is_checked_as_short():  # C1, D37: the reason names the length without the title line
     s, fakes = stages(jina_doc("a" * 450), doc(ARTICLE, title="BD"), order=("jina", "brightdata"))
     out = run(s, doc(ARTICLE))
     assert notes(out) == [NOTE_LIVE.format(provider="Bright Data", reasons="Jina: very short page (450 characters)")]
 
 
-def test_jina_length_against_the_reference_without_header_lines():  # C5, D37
+def test_jina_length_against_the_reference_without_title_line():  # C5, D37
     body = "w" * 600
     s, _ = stages(jina_doc(body), doc(ARTICLE, title="BD"), order=("jina", "brightdata"))
-    assert run(s, doc("k" * 900))["title"] == "BD"  # 900 >= 1.5 * 600; with the header lines it would pass
+    assert run(s, doc("k" * 900))["title"] == "BD"  # 900 >= 1.5 * 600; with the title line it would pass
 
 
 @pytest.mark.parametrize(("other", "winner", "n"), [(480, "Bright Data", 480), (400, "Jina", 450)])
-def test_jina_length_in_the_fallback_without_header_lines(other, winner, n):  # K8, V15, D37
+def test_jina_length_in_the_fallback_without_title_line(other, winner, n):  # K8, V15, D37
     s, _ = stages(jina_doc("a" * 450), doc("b" * other), order=("jina", "brightdata"))
     out = run(s, None)
-    assert f"({winner}, {n} characters;" in notes(out)[0]  # with the header lines Jina would have had 540
+    assert f"({winner}, {n} characters;" in notes(out)[0]  # with the title line Jina would have had 540
 
 
 def test_text_at_out_of_range_is_ignored():  # E2: only a position inside the text counts
@@ -1011,3 +1011,192 @@ def test_keenable_without_answer_is_named():  # N9: the reasons list Keenable wh
     s, _ = stages(gone("Bright Data", 404), Fake(gone("Jina", 404), then=used_up))
     out = run(s, "pending", budget=20.0, clock=clock)
     assert out["error"].endswith("Keenable: no time left")
+
+
+# --- V16, D41: the returned text is shaped, classification and checks see the provider's text ----------------
+
+
+MD = " [Apply now](https://x.example/a) ![i](p.png)"
+MD_SHAPED = " Apply now <https://x.example/a> "
+IMG_LONG = "![i](https://i.example/" + "a" * 300 + ")"
+
+
+def image_url(n_chars):
+    return "![i](https://i.example/" + "z" * n_chars + ")"
+
+
+def test_result_is_shaped_with_the_notes_in_front():  # V16, V1: notes are added after the shaping
+    s, _ = stages(gone("Bright Data", 404), doc(ARTICLE + MD))
+    out = run(s, None)
+    note = NOTE_LIVE.format(provider="Jina", reasons="Bright Data: target HTTP 404")
+    assert out["content"] == note + "\n\n" + ARTICLE + MD_SHAPED
+    assert notes(out) == [note]
+
+
+def test_first_stage_result_is_shaped_without_note():  # V16
+    s, _ = stages(doc(ARTICLE + MD))
+    assert run(s, None)["content"] == ARTICLE + MD_SHAPED
+
+
+def test_jina_result_gets_its_link_addresses():  # V16a through the chain: links and text_at of the fetcher
+    head = "Title: Some page\n\n"
+    link = ["Apply now", "https://x.example/a"]
+    s, _ = stages(doc(head + ARTICLE + " Apply now", links=[link], text_at=len(head)), order=("jina",))
+    assert run(s, None)["content"] == head + ARTICLE + " Apply now <https://x.example/a>"
+
+
+def test_jina_title_line_is_never_searched_for_addresses():  # V16a, A7
+    head = "Title: Apply now\n\n"
+    s, _ = stages(doc(head + ARTICLE, links=[["Apply now", "https://x.example/a"]], text_at=len(head)))
+    assert run(s, None)["content"] == head + ARTICLE
+
+
+def test_paywall_result_is_shaped():  # V16: the paywall result too
+    s, _ = stages(doc(PAYWALL_TEXT + MD))
+    out = run(s, None)
+    assert out["content"] == NOTE_PAYWALL + "\n\n" + PAYWALL_TEXT + MD_SHAPED
+
+
+def test_keenable_result_is_shaped():  # V16: Keenable is Markdown as well
+    s, _ = stages(gone("Bright Data", 404))
+    out = run(s, doc(ARTICLE + MD))
+    assert out["content"].endswith("\n\n" + ARTICLE + MD_SHAPED)
+
+
+def test_fallbacks_are_shaped():  # V16, K8: longest result, bot check, consent wall
+    s, _ = stages(doc("x" * 300 + MD))  # thin, kept
+    out = run(s, None)
+    assert out["content"].endswith("\n\n" + "x" * 300 + MD_SHAPED) and "No source passed the checks" in notes(out)[0]
+    s, _ = stages(doc("Enable JavaScript. " + "a" * 1000 + MD))  # check hint, kept
+    out = run(s, None)
+    assert out["content"].endswith("a" * 1000 + MD_SHAPED) and notes(out)[0].startswith("[extract-chain] This looks")
+    s, _ = stages(doc(WALL_TEXT + MD))
+    out = run(s, None)
+    assert out["content"].endswith("\n\n" + WALL_TEXT + MD_SHAPED) and "Consent wall" in notes(out)[0]
+    s, _ = stages(doc(BOT + MD))
+    out = run(s, None)
+    assert out["content"].endswith("\n\n" + BOT + MD_SHAPED) and "bot-check" in notes(out)[0]
+
+
+def test_error_entries_are_not_touched():  # V16
+    s, _ = stages(gone("Bright Data", 404))
+    out = run(s, None)
+    assert out["content"] == "" and out["error"]
+
+
+def test_classification_sees_the_raw_text_not_the_shaped_one():  # D41: lengths with the image reference
+    content = "x" * 400 + IMG_LONG  # raw about 725 characters: ok; shaped 400: would be thin
+    assert chain.classify(doc(content), full_page=True) == "ok" and suspect(doc(content), None) is None
+    s, _ = stages(doc(content))
+    out = run(s, None)
+    assert out["content"] == "x" * 400  # taken without a note, returned shaped
+
+
+def test_checks_see_the_raw_text_images_with_consent_in_the_url():  # D41, N7.4: as in 0.3.2
+    content = ARTICLE + "![a](https://i.example/consent-1.png) ![b](https://i.example/consent-2.png)"
+    assert suspect(doc(content), None) == "consent"  # two consent words in the raw text, none in the shaped one
+    s, _ = stages(doc(content), doc(ARTICLE, title="second"), order=("brightdata", "jina"))
+    out = run(s, None)
+    assert out["title"] == "second"
+    assert notes(out) == [NOTE_LIVE.format(provider="Jina", reasons="Bright Data: consent text")]
+
+
+def test_addresses_added_by_the_shaping_do_not_count_as_markers():  # D41: consent in a link address of Jina
+    links = [["Datenschutz", "https://x.example/consent-a"], ["Mehr Infos", "https://x.example/consent-b"]]
+    content = ARTICLE + " Datenschutz Mehr Infos"
+    s, _ = stages(doc(content, links=links))
+    out = run(s, None)  # the raw text has no marker: taken without a note
+    assert not out["content"].startswith("[extract-chain]")
+    assert (
+        out["content"]
+        == ARTICLE + " Datenschutz <https://x.example/consent-a> Mehr Infos <https://x.example/consent-b>"
+    )
+
+
+def test_v15_counts_the_raw_text():  # V15, D41: n is the length before the shaping
+    first = "x" * 100 + IMG_LONG  # raw about 425 (thin, kept), shaped 100
+    s, _ = stages(doc(first), doc("y" * 300), order=("brightdata", "jina"))
+    out = run(s, None)
+    assert f"(Bright Data, {n(first)} characters;" in notes(out)[0]
+    assert out["content"].endswith("\n\n" + "x" * 100)
+
+
+def test_v15_for_jina_counts_from_text_at_on_the_raw_text():  # V15, E2, D41
+    head = "Title: Some page\n\n"
+    body = "x" * 100 + " Apply now" + " y" * 50
+    s, _ = stages(doc(head + body, links=[["Apply now", "https://x.example/a"]], text_at=len(head)), order=("jina",))
+    out = run(s, None)
+    assert f"(Jina, {n(body)} characters;" in notes(out)[0]
+    assert "<https://x.example/a>" in out["content"]
+
+
+# --- C5, D43: lengths without image references and link addresses -------------------------------------------
+
+
+def pad(text, images=0, size=300):
+    return text + "".join(f" {image_url(size)}" for _ in range(images))
+
+
+def test_plain_length_drops_images_and_reduces_links_to_their_text():  # C5, D43
+    d = doc("Start [Apply now](https://x.example/" + "p" * 100 + ") und ![i](https://i.example/" + "q" * 100 + ") Ende")
+    assert chain._plain_length(d) == len("Start Apply now und  Ende")
+    assert chain._plain_length(doc("<p>Text</p> [Link text](https://x.example/a)")) == len("Text Link text")
+
+
+def test_plain_length_starts_at_text_at():  # C5, E2
+    head = "Title: " + "T" * 100 + "\n\n"
+    d = doc(head + "Body [Link text](https://x.example/a)", text_at=len(head))
+    assert chain._plain_length(d) == len("Body Link text")
+
+
+def test_plain_length_does_not_protect_code_blocks():  # C5, D43: without the exception for fenced blocks
+    d = doc("```\n[Link text](https://x.example/a)\n```")
+    assert chain._plain_length(d) == len("```\nLink text\n```")
+
+
+def test_c5_reference_with_many_links_does_not_trigger_against_jina_plain_text():  # C5, D43
+    head = "Title: Some page\n\n"
+    jina = doc(head + ARTICLE, text_at=len(head))
+    reference = doc(ARTICLE.replace("Artikeltext", "[Artikeltext](https://x.example/" + "p" * 60 + ")"))
+    assert chain._length(reference) >= 1.5 * chain._length(jina)  # raw lengths would trigger C5
+    s, _ = stages(jina, order=("jina",))
+    out = run(s, reference)
+    assert not out["content"].startswith("[extract-chain]") and out["content"].startswith("Title: Some page")
+
+
+def test_c5_reference_with_image_addresses_does_not_trigger():  # C5, D43
+    reference = doc(ARTICLE + " " + image_url(1500))
+    assert chain._length(reference) >= 1.5 * chain._length(doc(ARTICLE))
+    s, _ = stages(doc(ARTICLE, title="live"))
+    assert run(s, reference)["title"] == "live"
+
+
+def test_c5_stage_with_long_addresses_is_still_shorter_than_the_reference():  # C5, D43
+    stage = doc(ARTICLE + " " + image_url(3000), title="live")  # raw about 4,000: raw lengths would not trigger
+    reference = doc(ARTICLE + ARTICLE[:600])  # 1,620 characters against 1,020
+    assert chain._length(reference) < 1.5 * chain._length(stage)
+    s, _ = stages(stage, doc(ARTICLE + ARTICLE[:600], title="second"), order=("brightdata", "jina"))
+    out = run(s, reference)
+    assert out["title"] == "second"
+    assert notes(out) == [NOTE_LIVE.format(provider="Jina", reasons="Bright Data: shorter than the reference copy")]
+
+
+@pytest.mark.parametrize(("reference", "rule"), [(1499, None), (1500, "shorter"), (1501, "shorter")])
+def test_c5_factor_on_link_free_lengths_with_images(reference, rule):  # C5, D43: factor 1.5 on the plain lengths
+    d = doc("a" * 1000 + " " + image_url(2000))  # raw about 3,000, plain 1,000
+    assert suspect(d, reference) == rule
+
+
+@pytest.mark.parametrize(("reference", "rule"), [(1498, None), (1499, "shorter")])
+def test_c5_factor_on_link_free_lengths_with_links(reference, rule):  # C5, D43: link texts count, addresses not
+    d = doc(" ".join("[" + "a" * 249 + "](https://x.example/" + "p" * 200 + ")" for _ in range(4)))
+    assert chain._plain_length(d) == 4 * 249 + 3 == 999  # 1.5 * 999 = 1498.5
+    assert suspect(d, reference) == rule
+
+
+def test_c5_reference_length_is_taken_link_free_in_the_chain():  # C5, D43: the factor on both sides
+    stage = doc("a" * 1000 + " " + image_url(2000), title="live")
+    for ref_plain, taken in ((1499, "live"), (1500, "second")):
+        reference = doc("b" * ref_plain + " " + image_url(1000))
+        s, _ = stages(stage, doc("c" * 1500, title="second"), order=("brightdata", "jina"))
+        assert run(s, reference)["title"] == taken

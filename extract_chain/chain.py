@@ -10,6 +10,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from .shape import shape, without_addresses
+
 log = logging.getLogger(__name__)
 
 Fetch = Callable[[float], Awaitable[dict]]  # takes the time it may use, in seconds
@@ -140,6 +142,16 @@ def _length(doc: dict) -> int:
     return len(_TAGS.sub("", content).strip())
 
 
+def _plain_length(doc: dict) -> int:
+    """C5, D43: visible length without image references and link addresses, so that Markdown and Jina's plain text
+    compare fairly."""
+    content = doc.get("content") or ""
+    at = doc.get("text_at")
+    if isinstance(at, int) and 0 < at <= len(content):
+        content = content[at:]
+    return len(_TAGS.sub("", without_addresses(content)).strip())
+
+
 def classify(doc: dict, full_page: bool = False) -> str:
     """E1-E8: 'error', 'empty', 'challenge', 'wall', 'paywall', 'thin' or 'ok'. full_page: whole page."""
     if doc.get("error"):
@@ -173,7 +185,7 @@ def suspect(doc: dict, reference_len: int | None) -> str | None:
         return "check"
     if n < CONSENT_BELOW and len(_CONSENT_RX.findall(visible)) >= CONSENT_MIN:
         return "consent"
-    if reference_len is not None and reference_len >= REFERENCE_FACTOR * max(1, n):
+    if reference_len is not None and reference_len >= REFERENCE_FACTOR * max(1, _plain_length(doc)):
         return "shorter"
     return None
 
@@ -202,7 +214,7 @@ def _result(url: str, doc: dict, *notes: str) -> dict:
     if _redirect(url, doc.get("final_url")):
         final = " ".join(doc["final_url"].split())[:200]  # one line (V1), cut to 200 characters (V10)
         notes = (*notes, NOTE_REDIRECT.format(final=final))
-    content = doc.get("content") or ""
+    content = shape(url, doc)  # V16: link addresses and images; notes are added after it (V1)
     if notes:
         content = "\n".join(notes) + "\n\n" + content
     metadata = {"sourceURL": url}
@@ -327,7 +339,7 @@ async def run_chain(
                 ref = await keenable_doc(min(REFERENCE_WAIT, left()))  # K3, D35
                 # only a real copy is a reference; a consent page or bot check of Keenable is none (second opinion)
                 usable = ref is not None and classify(ref) in ("ok", "thin")
-                reference_len = _length(ref) if usable else None
+                reference_len = _plain_length(ref) if usable else None  # C5, D43
             rule = suspect(doc, reference_len)
             if rule is None:
                 steps.append(f"{stage.id}={kind}")

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 – 2026-10-26
+
+Compact text for Hermes' cut of 15,000 characters per result, with the link addresses agents follow. From a measurement on 458 pages and three agents' sessions (2026-10-26). No change to the keys, the configuration or the default order.
+
+**Changed behaviour**
+
+- Jina is asked for JSON with plain text and the page's link list (`X-Return-Format: text`, `X-With-Links-Summary: all`) instead of Markdown (A7, D40). The plugin puts each link address after its link text (`Apply now <https://…>`, V16a). In Hermes' default cut, the full core text was visible on 298 of 458 pages instead of 222, at 2,295 instead of 3,381 tokens; of 39 links that agents had followed from fetched pages, 34 stay visible, as many as with Markdown (plain text alone: 1).
+- The target status comes from Jina's `httpStatus` instead of the `Warning:` header line; the title from `title`. A non-empty title stays in front of the text as `Title: <title>`, so bot-check markers in titles still count (D37).
+- Markdown from Bright Data, Firecrawl, Tavily and Keenable loses its images, and its links become `text <url>`; link texts shorter than 4 characters keep no address (V16b). In the median 15 % fewer characters for Bright Data, 29 % for Firecrawl, 7 % for Keenable.
+- The length comparison with Keenable's copy (C5) counts both texts without image references and link addresses (D43). Otherwise Keenable's Markdown, addresses included, looked longer than Jina's plain text, and the chain moved on from complete Jina pages to Bright Data (55 of 458 pages instead of 26).
+- Classification and checks still run on the services' own text; only the returned text is shaped (D41). Bounds keep the work short on huge pages: at most 500 links placed, length caps in the Markdown patterns (D42).
+
+**Replay:** sets 1 and 2 keep their counts (116 and 171 complete); through C5, 3 pages come from another stage, complete before and after (the stored Jina replies there are the old text replies); set 3 (Jina's JSON replies of 2026-10-26) in `docs/validation.md`.
+
+**Docs:** design (S4, E2, C5, V1, V15, V16, A6, A7, T2, section 13, D37, D40–D43), README, validation.
+
 ## 0.3.2 – 2026-10-19
 
 The remaining findings of the nine-model review of 0.3.0, checked with a live probe of Bright Data and the benchmark data. No change to the keys, the configuration or the default order.
