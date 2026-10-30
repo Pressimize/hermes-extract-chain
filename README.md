@@ -1,4 +1,6 @@
-# hermes-extract-chain
+# Sift
+
+**Resilient web extraction for Hermes Agent.**
 
 A [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin that makes `web_extract` fall back across four page-fetch services (**Jina → Bright Data → Firecrawl → Keenable**, Tavily optional), checks each result against a second copy of the page, and tells the model where the text came from.
 
@@ -67,8 +69,8 @@ No extra Python packages: the plugin only uses `httpx`, which ships with Hermes.
 | Hermes Desktop (Windows), per profile | `%LOCALAPPDATA%\hermes\profiles\<profile>\plugins\extract-chain\` |
 
 ```bash
-git clone https://github.com/Pressimize/hermes-extract-chain.git
-cp -r hermes-extract-chain/extract_chain "${HERMES_HOME:-$HOME/.hermes}/plugins/extract-chain"
+git clone https://github.com/Pressimize/hermes-sift.git
+cp -r hermes-sift/extract_chain "${HERMES_HOME:-$HOME/.hermes}/plugins/extract-chain"
 ```
 
 Then enable it in the profile's `config.yaml` (user plugins are opt-in) and select it:
@@ -102,7 +104,7 @@ Restart Hermes (or the gateway).
 **With Hermes' installer:** Hermes can install a plugin from a Git subdirectory and asks for the keys:
 
 ```bash
-hermes plugins install Pressimize/hermes-extract-chain#extract_chain --enable
+hermes plugins install Pressimize/hermes-sift#extract_chain --enable
 ```
 
 It clones only the `extract_chain` subdirectory, asks for the required values (three keys and the zone) and enables the plugin. `JINA_API_KEY`, `TAVILY_API_KEY`, `EXTRACT_CHAIN_ORDER` and the `web:` settings above still go in by hand. Enabling through Hermes' CLI also syncs Hermes' package environment. The plugin needs no packages, but the manual route avoids that step entirely, which can matter in containers built from the official image. The manual route is the one we tested.
