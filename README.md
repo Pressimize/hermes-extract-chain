@@ -2,6 +2,8 @@
 
 **Extract smarter. Keep what matters.**
 
+> Sift is part of a package with [Seek](https://github.com/Pressimize/hermes-seek), which does the same for `web_search`. The two work best together: use both.
+
 Resilient multi-provider web extraction for Hermes Agent.
 
 A [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin that makes `web_extract` fall back across four page-fetch services (**Jina → Bright Data → Firecrawl → Keenable**, Tavily optional), checks each result against a second copy of the page, and tells the model where the text came from.

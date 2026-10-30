@@ -1,5 +1,5 @@
 # Notes for Claude Code
 
-In cloud sessions (claude.ai/code): before pushing a change to code (not for typo fixes in the docs), get a second opinion from free models with the private tool repository `Pressimize/second-opinion`: clone it next to this repository (`git clone https://github.com/Pressimize/second-opinion ../second-opinion`) and follow its README. If it cannot be cloned, say so in the PR text and continue without it. Local sessions skip this step unless the maintainer asks for it; they review with their own helpers instead.
+Sift is one half of a pair with [Seek](https://github.com/Pressimize/hermes-seek), which does the same for `web_search`. Both follow the same conventions (settings, log and error prefixes, key masking, release steps). When you change one of them here, check whether Seek needs the same change.
 
 Earlier reviews and the points they settled are in `docs/reviews/`. Read them before raising a point again.
