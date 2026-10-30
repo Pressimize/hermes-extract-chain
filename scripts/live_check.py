@@ -5,7 +5,7 @@ Run with the Python interpreter of a Hermes installation (isolated mode), e.g. H
     <hermes python> -I scripts/live_check.py URLS_JSON OUTDIR PROFILE [PACE_S]
 
 URLS_JSON  list of {"id", "url", ...}; entries with the same "group" value are sent in one web_extract call.
-PROFILE    Hermes profile with the plugin installed, web.extract_backend: extract-chain,
+PROFILE    Hermes profile with the plugin installed, web.extract_backend: sift,
            web.keyless_rescue: false and web.extract_timeout: 180 (N9). Its .env provides the keys.
 PACE_S     wait after each call, per URL of the call (default 7.5 s: below 8 URLs/min per provider).
 
@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 ROOT = os.environ.get("HERMES_ROOT") or os.path.join(os.environ.get("LOCALAPPDATA", ""), "hermes")
-KEENABLE_NOTE = "[extract-chain] Copy via Keenable"
+KEENABLE_NOTE = "[sift] Copy via Keenable"
 TIME_LIMIT = 180  # N9: web.extract_timeout
 PROVIDERS = ("brightdata", "jina", "firecrawl", "tavily", "keenable")
 
@@ -55,7 +55,7 @@ class Collect(logging.Handler):
         self.lines = []
 
     def emit(self, record):
-        if record.getMessage().startswith("extract-chain "):
+        if record.getMessage().startswith("sift "):
             self.lines.append((round(record.created, 1), record.getMessage()))
 
 
@@ -99,8 +99,8 @@ def main():
     from tools.web_tools import _ensure_web_plugins_loaded, _get_extract_backend, web_extract_tool
 
     _ensure_web_plugins_loaded()
-    assert _get_extract_backend() == "extract-chain", f"extract backend is {_get_extract_backend()!r}"
-    assert get_provider("extract-chain"), "plugin not loaded (plugins.enabled?)"
+    assert _get_extract_backend() == "sift", f"extract backend is {_get_extract_backend()!r}"
+    assert get_provider("sift"), "plugin not loaded (plugins.enabled?)"
 
     collect = Collect()
     logging.getLogger().addHandler(collect)
@@ -133,7 +133,7 @@ def main():
             problems += found
             for case, res, line in zip(group, results, shown, strict=False):
                 content = res.get("content") or ""
-                first = content.split("\n", 1)[0] if content.startswith("[extract-chain]") else ""
+                first = content.split("\n", 1)[0] if content.startswith("[sift]") else ""
                 print(f"{case['id']:<16} {duration:>5} s  {line.split(': ', 1)[-1]:<45} "
                       f"len={len(content):>6}  {first[16:70]}{(res.get('error') or '')[:70]}", flush=True)  # fmt: skip
             time.sleep(pace * len(urls))

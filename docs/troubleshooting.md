@@ -6,10 +6,10 @@ How failures show up, what the log line means, typical problems with their fixes
 
 | Place | What you find |
 |---|---|
-| The tool result the model sees | Per URL either content (possibly with `[extract-chain]` notes at the top) or an `error` listing the reason of every stage, e.g. `Jina: target HTTP 403; Bright Data: target HTTP 403; Firecrawl: target HTTP 403; Keenable: Gateway timeout` |
-| `logs/agent.log` in the Hermes home (INFO) | One line per URL: `extract-chain <host>: jina=… brightdata=… firecrawl=… keenable=…` (L1; `tavily=…` appears only if Tavily is in the order) |
-| `logs/errors.log` (WARNING) | Plugin load failures, the website-policy import warning, the plugin's `chain failed` warning, the start of a pause (`… paused for <seconds> s`), an invalid `EXTRACT_CHAIN_ORDER`, a `web.extract_timeout` below 180 s, Hermes' extract timeouts |
-| `hermes plugins list` | Whether `extract-chain` is enabled and loaded, or why it failed to load |
+| The tool result the model sees | Per URL either content (possibly with `[sift]` notes at the top) or an `error` listing the reason of every stage, e.g. `Jina: target HTTP 403; Bright Data: target HTTP 403; Firecrawl: target HTTP 403; Keenable: Gateway timeout` |
+| `logs/agent.log` in the Hermes home (INFO) | One line per URL: `sift <host>: jina=… brightdata=… firecrawl=… keenable=…` (L1; `tavily=…` appears only if Tavily is in the order) |
+| `logs/errors.log` (WARNING) | Plugin load failures, the website-policy import warning, the plugin's `chain failed` warning, the start of a pause (`… paused for <seconds> s`), an invalid `SIFT_ORDER`, a `web.extract_timeout` below 180 s, Hermes' extract timeouts |
+| `hermes plugins list` | Whether `sift` is enabled and loaded, or why it failed to load |
 
 Count how often each stage was needed and how it ended, e.g. to watch credits:
 
@@ -21,12 +21,12 @@ grep -oE "(jina|brightdata|firecrawl|tavily|keenable)=[a-z_0-9]*" logs/agent.log
 
 | Level | Failure | What the model sees | Log |
 |---|---|---|---|
-| Plugin not available | not in `plugins.enabled`, import error, `requires_hermes` mismatch, directory without `plugin.yaml`/`__init__.py` | Every `web_extract` call fails: *web is configured to use 'extract-chain' (set via hermes tools), but no registered web extract provider has that name.* | `errors.log`: `Failed to load plugin 'extract-chain': …` or `Plugin 'extract-chain' skipped: requires hermes >=0.21, running …`; `hermes plugins list` says *not enabled in config* |
-| Whole call | Hermes' `web.extract_timeout` reached | `Extract timed out after <n>s via extract-chain` for every URL of the call, including URLs that had already finished | `errors.log`: `web_extract provider 'extract-chain' timed out …` |
-| Whole call | Hermes' policy module cannot be imported (incompatible Hermes version) | `Blocked by website policy: extract-chain cannot load Hermes' website blocklist …` for every URL; nothing is fetched, and the keyless rescue does not step in | `errors.log`: `extract-chain: tools.website_policy not importable; every URL refused` |
+| Plugin not available | not in `plugins.enabled`, import error, `requires_hermes` mismatch, directory without `plugin.yaml`/`__init__.py` | Every `web_extract` call fails: *web is configured to use 'sift' (set via hermes tools), but no registered web extract provider has that name.* | `errors.log`: `Failed to load plugin 'sift': …` or `Plugin 'sift' skipped: requires hermes >=0.21, running …`; `hermes plugins list` says *not enabled in config* |
+| Whole call | Hermes' `web.extract_timeout` reached | `Extract timed out after <n>s via sift` for every URL of the call, including URLs that had already finished | `errors.log`: `web_extract provider 'sift' timed out …` |
+| Whole call | Hermes' policy module cannot be imported (incompatible Hermes version) | `Blocked by website policy: sift cannot load Hermes' website blocklist …` for every URL; nothing is fetched, and the keyless rescue does not step in | `errors.log`: `sift: tools.website_policy not importable; every URL refused` |
 | Whole call | Bug in the plugin raises | `Error extracting content: …`. With `web.keyless_rescue` on, Hermes instead tries anonymous providers, and you see content without notes | traceback in `errors.log` |
-| One URL | Bug in the plugin raises while handling that URL | `error`: `extract-chain: <exception class>`; the other URLs of the call keep their results | `errors.log`: `extract-chain <host>: chain failed: <exception class>` |
-| One URL | Hermes' policy check raises for the URL or its final URL | `error`: `Blocked by website policy: the check failed for this URL (<exception class>)`; the content is withheld | `errors.log`: `extract-chain: website policy check failed for a URL (blocked): <exception class>` |
+| One URL | Bug in the plugin raises while handling that URL | `error`: `sift: <exception class>`; the other URLs of the call keep their results | `errors.log`: `sift <host>: chain failed: <exception class>` |
+| One URL | Hermes' policy check raises for the URL or its final URL | `error`: `Blocked by website policy: the check failed for this URL (<exception class>)`; the content is withheld | `errors.log`: `sift: website policy check failed for a URL (blocked): <exception class>` |
 | One URL | Policy block | `error` with Hermes' block message plus a `blocked_by_policy` field | none; Hermes' policy logs |
 | One URL | No stage delivered | the longest suspect result, a consent-wall or bot-check page with a note, or an `error` listing every stage's reason (K8) | the L1 line shows each stage's outcome |
 | One URL | A later stage delivered | content with a note naming the source and why the earlier stages were passed over | the L1 line |
@@ -87,8 +87,8 @@ Each stage appears as `<stage>=<outcome>`, in order, Keenable last. The outcomes
 **Every call fails with "no registered web extract provider has that name".**
 The plugin is not loaded. Check, in this order:
 
-1. `extract-chain` is listed under `plugins.enabled` in the profile's `config.yaml`. User plugins are opt-in.
-2. The directory `plugins/extract-chain/` contains `plugin.yaml` and `__init__.py`, not a nested `extract_chain/` folder.
+1. `sift` is listed under `plugins.enabled` in the profile's `config.yaml`. User plugins are opt-in.
+2. The directory `plugins/sift/` contains `plugin.yaml` and `__init__.py`, not a nested `sift/` folder.
 3. `hermes plugins list` and `errors.log` show the reason: an import error or a Hermes version below 0.21.
 4. Hermes or the gateway was restarted after installing.
 
@@ -107,13 +107,13 @@ Without KYC, Bright Data refuses government sites and some other categories, and
 **`…=no_time`.**
 The URL's budget (Z1) was used up, mostly by a slow Bright Data request (up to 90 s) after a failed Jina request, and further stages. The fallback (K8) then returns what was kept. If it happens often, check `web.extract_timeout`: with less than 180 the budget is smaller than 170 s.
 
-**`Extract timed out after <n>s via extract-chain`, or the warning `web.extract_timeout is <n> s; 180 s are recommended`.**
+**`Extract timed out after <n>s via sift`, or the warning `web.extract_timeout is <n> s; 180 s are recommended`.**
 `web.extract_timeout` is too small for the chain. Set it to 180 (I2). The plugin keeps each URL 10 s below the setting, but Hermes discards the whole call when the setting is reached.
 
 **`…=paused` although the credits are back.**
-A pause does not notice a top-up. It ends after 24 hours (K7); to use the stage at once, restart Hermes or the gateway. `errors.log` shows when a pause began: `extract-chain: Firecrawl paused for 86400 s (api_402)`.
+A pause does not notice a top-up. It ends after 24 hours (K7); to use the stage at once, restart Hermes or the gateway. `errors.log` shows when a pause began: `sift: Firecrawl paused for 86400 s (api_402)`.
 
-**Warning `EXTRACT_CHAIN_ORDER has unknown or repeated names`.**
+**Warning `SIFT_ORDER has unknown or repeated names`.**
 A name in the list is misspelt or repeated. The warning names the order used. Valid names: `jina`, `brightdata`, `firecrawl`, `tavily`, `keenable`. Tavily is not in the default order; it runs only if you name it.
 
 **`keenable=http_401` / `http_403`.**
@@ -143,8 +143,8 @@ Check C5 fires when Keenable's copy is much longer, also on complete pages where
 **The same wrong or stale result keeps coming back.**
 Hermes caches successful results, notes included, for `web.cache_ttl_minutes` (default 20). This includes a consent page returned with the wall note. Jina and Firecrawl may also serve copies up to an hour old (A7, D7). Wait, or lower the TTL.
 
-**Every URL fails with `Blocked by website policy: extract-chain cannot load Hermes' website blocklist …`.**
-A Hermes update moved the policy module, and the plugin fetches nothing without the blocklist (S7). `errors.log` shows `extract-chain: tools.website_policy not importable; every URL refused` for each call. Update the plugin; until then, set `web.extract_backend` to another provider.
+**Every URL fails with `Blocked by website policy: sift cannot load Hermes' website blocklist …`.**
+A Hermes update moved the policy module, and the plugin fetches nothing without the blocklist (S7). `errors.log` shows `sift: tools.website_policy not importable; every URL refused` for each call. Update the plugin; until then, set `web.extract_backend` to another provider.
 
 **Credits drain faster than expected.**
 Jina and Keenable are asked for every URL (default order); the later stages only when earlier ones fail or are suspect. Common causes for Firecrawl:

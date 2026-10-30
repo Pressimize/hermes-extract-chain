@@ -1,8 +1,8 @@
-# Development tooling only. The plugin itself is the directory extract_chain/ and is copied into
+# Development tooling only. The plugin itself is the directory sift/ and is copied into
 # $HERMES_HOME/plugins/ without this file (design I3: no pyproject.toml inside the plugin directory).
 [project]
-name = "hermes-extract-chain"
-version = "0.4.0"
+name = "hermes-sift"
+version = "0.5.0"
 description = "Hermes Agent plugin: web_extract fallback chain Jina -> Bright Data -> Firecrawl -> Keenable, Tavily optional"
 requires-python = ">=3.11"
 license = "MIT"

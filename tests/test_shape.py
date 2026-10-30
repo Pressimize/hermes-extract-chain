@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from extract_chain import shape as shape_module
-from extract_chain.shape import LINK_TEXT_MAX, LINK_TEXT_MIN, LINKS_MAX, clean_links, insert_links, markdown, shape
+from sift import shape as shape_module
+from sift.shape import LINK_TEXT_MAX, LINK_TEXT_MIN, LINKS_MAX, clean_links, insert_links, markdown, shape
 
 U = "https://a.example/x"
 H = "https://h.example/"

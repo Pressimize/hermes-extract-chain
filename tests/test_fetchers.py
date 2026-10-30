@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-from extract_chain import chain, fetchers
+from sift import chain, fetchers
 
 U = "https://a.example/x"
 
@@ -538,7 +538,7 @@ def test_keenable_request_and_success():  # A3
     request = seen[0]
     assert request.method == "GET" and request.url.params["url"] == "https://a.example/?q=1"
     assert request.headers["authorization"] == "Bearer ke-key"
-    assert request.headers["x-keenable-title"] == "hermes-extract-chain"
+    assert request.headers["x-keenable-title"] == "hermes-sift"
     assert out == {"title": "K", "content": "Kopie", "final_url": "https://a.example/"}
 
 

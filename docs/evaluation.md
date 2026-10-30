@@ -69,7 +69,7 @@ The chain since v0.3.0. The reasons are the decisions in [design.md](design.md#1
 - **Bright Data second:** it catches Jina's rate limit (429) when several agents share Jina's keyless limit, and a second live stage before Firecrawl spares Firecrawl credits (D34).
 - **Firecrawl third:** live; it bills a credit per page, also for the 403/404 pages it returns (A2), so the two other live stages go first (D34).
 - **Keenable last, and the reference for every URL:** it reports its failures worst, and its copy is what the length check C5 compares against (D27, D28).
-- **Tavily optional:** it changed no result in either set; it runs only if `EXTRACT_CHAIN_ORDER` names it (D34).
+- **Tavily optional:** it changed no result in either set; it runs only if `SIFT_ORDER` names it (D34).
 - **Not in the chain:** TinyFish (removed, D26); Exa and Parallel (measured on set 1 only, kept for search); self-hosted browsers (they need a separate host).
 
 ## History: the tests behind v0.1–v0.2 (2026-10-09)

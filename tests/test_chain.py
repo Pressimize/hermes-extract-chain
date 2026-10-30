@@ -7,8 +7,8 @@ import time
 
 import pytest
 
-from extract_chain import chain
-from extract_chain.chain import (
+from sift import chain
+from sift.chain import (
     NOTE_CHECK,
     NOTE_COPY,
     NOTE_LIVE,
@@ -319,8 +319,8 @@ def notes(out):
 
 
 def logged(caplog):
-    caplog.set_level(logging.INFO, logger="extract_chain.chain")
-    return lambda: [r.getMessage() for r in caplog.records if r.name == "extract_chain.chain"]
+    caplog.set_level(logging.INFO, logger="sift.chain")
+    return lambda: [r.getMessage() for r in caplog.records if r.name == "sift.chain"]
 
 
 # --- N6, N17: stages in order ------------------------------------------------------------------------
@@ -493,7 +493,7 @@ def test_longest_suspect_result_is_returned():  # N8 (a), N18
 def test_longest_tie_goes_to_the_earlier_stage():  # N8 (a): equal length, earlier position
     s, _ = stages(doc("a" * 300, title="BD"), doc("b" * 300, title="J"), None, None)
     out = run(s, None)
-    assert out["title"] == "BD" and notes(out)[0].startswith("[extract-chain] No source passed the checks")
+    assert out["title"] == "BD" and notes(out)[0].startswith("[sift] No source passed the checks")
 
 
 def test_longest_result_may_be_keenables():  # N8 (a): Keenable's suspect result is a candidate as well
@@ -605,8 +605,7 @@ def test_keenables_copy_after_404s_gets_the_copy_note(caplog):  # K4, V13, D36
     assert out["content"] == NOTE_COPY.format(provider="Keenable", reasons=reasons) + "\n\n" + ARTICLE
     assert [f.calls for f in fakes] == [1, 1, 1, 1]
     assert lines() == [
-        "extract-chain news.example: brightdata=target_404 jina=target_404 firecrawl=target_404 tavily=error "
-        "keenable=ok"
+        "sift news.example: brightdata=target_404 jina=target_404 firecrawl=target_404 tavily=error keenable=ok"
     ]
 
 
@@ -636,7 +635,7 @@ def test_interrupted_stage_ends_the_chain_without_waiting_for_keenable(caplog): 
     out = run(s, "pending")  # a running Keenable request is not awaited
     assert out["error"] == "Bright Data: API 500; Jina: interrupted; Keenable: interrupted"
     assert fakes[2].calls == 0
-    assert lines() == ["extract-chain news.example: brightdata=api_500 jina=interrupted keenable=interrupted"]
+    assert lines() == ["sift news.example: brightdata=api_500 jina=interrupted keenable=interrupted"]
 
 
 def test_interrupt_falls_back_to_the_kept_result(short_wait):  # S8, N8 (a)
@@ -653,7 +652,7 @@ def test_interrupt_uses_a_copy_that_has_arrived(caplog):  # S8: an arrived copy 
     reasons = "Bright Data: very short page (259 characters); Jina: interrupted"
     assert out["content"] == NOTE_COPY.format(provider="Keenable", reasons=reasons) + "\n\n" + ARTICLE
     assert fakes[2].calls == 0
-    assert lines() == ["extract-chain news.example: brightdata=suspect_thin jina=interrupted keenable=ok"]
+    assert lines() == ["sift news.example: brightdata=suspect_thin jina=interrupted keenable=ok"]
 
 
 def test_interrupt_without_keenable_key_logs_no_key(caplog):  # S8, L1: not "interrupted"
@@ -661,7 +660,7 @@ def test_interrupt_without_keenable_key_logs_no_key(caplog):  # S8, L1: not "int
     s, _ = stages(err("Bright Data", "API 500", "api_500"), err("Jina", "interrupted", "interrupted"))
     out = run(s, None)
     assert out["error"] == "Bright Data: API 500; Jina: interrupted; Keenable: no API key"
-    assert lines() == ["extract-chain news.example: brightdata=api_500 jina=interrupted keenable=no_key"]
+    assert lines() == ["sift news.example: brightdata=api_500 jina=interrupted keenable=no_key"]
 
 
 # --- K3, D35: the wait for the reference ------------------------------------------------------------------
@@ -795,7 +794,7 @@ def test_stage_without_fetch_is_skipped_with_its_reason(caplog):  # N3, L1
     s = [Stage("brightdata", "Bright Data", None, missing="no zone"), Stage("jina", "Jina", Fake(doc(ARTICLE)))]
     out = run(s, doc(ARTICLE))
     assert notes(out) == [NOTE_LIVE.format(provider="Jina", reasons="Bright Data: no zone")]
-    assert lines() == ["extract-chain news.example: brightdata=no_key jina=ok keenable=ref_ok"]
+    assert lines() == ["sift news.example: brightdata=no_key jina=ok keenable=ref_ok"]
 
 
 def test_exception_in_a_stage_fails_only_that_stage(caplog):  # S6
@@ -803,7 +802,7 @@ def test_exception_in_a_stage_fails_only_that_stage(caplog):  # S6
     s, fakes = stages(Fake(exc=RuntimeError("boom")), doc(ARTICLE))
     out = run(s, doc(ARTICLE))
     assert notes(out) == [NOTE_LIVE.format(provider="Jina", reasons="Bright Data: RuntimeError")]
-    assert lines() == ["extract-chain news.example: brightdata=exception jina=ok keenable=ref_ok"]
+    assert lines() == ["sift news.example: brightdata=exception jina=ok keenable=ref_ok"]
 
 
 def broken_for(content):
@@ -821,8 +820,8 @@ def test_unexpected_failure_fails_only_this_url(monkeypatch, caplog):  # S6
     monkeypatch.setattr(chain, "classify", broken_for("BOOM"))
     s, _ = stages(doc("BOOM"))
     out = run(s, doc(ARTICLE))
-    assert out["error"] == "extract-chain: KeyError" and out["content"] == ""
-    assert "extract-chain news.example: chain failed: KeyError" in caplog.messages
+    assert out["error"] == "sift: KeyError" and out["content"] == ""
+    assert "sift news.example: chain failed: KeyError" in caplog.messages
 
 
 def test_unexpected_failure_while_logging_the_reference_does_not_raise(monkeypatch):  # S6: run_chain never raises
@@ -840,8 +839,7 @@ def test_log_line_with_suspects_and_keenable(caplog):  # N20
     s, _ = stages(doc("a" * 300), doc("Cookie, cookie. " + "a" * 600), err("Firecrawl", "API 500", "api_500"), None)
     run(s, doc(ARTICLE))
     assert lines() == [
-        "extract-chain news.example: brightdata=suspect_thin jina=suspect_consent firecrawl=api_500 "
-        "tavily=no_key keenable=ok"
+        "sift news.example: brightdata=suspect_thin jina=suspect_consent firecrawl=api_500 tavily=no_key keenable=ok"
     ]
 
 
@@ -850,7 +848,7 @@ def test_log_line_suspect_print_check_shorter(caplog):  # N20
     s, _ = stages(doc("Ausdruck erstellt. " + ARTICLE), doc("Enable JavaScript. " + ARTICLE), doc(ARTICLE[:600]))
     run(s, doc(ARTICLE))
     assert lines() == [
-        "extract-chain news.example: brightdata=suspect_print jina=suspect_check firecrawl=suspect_shorter keenable=ok"
+        "sift news.example: brightdata=suspect_print jina=suspect_check firecrawl=suspect_shorter keenable=ok"
     ]
 
 
@@ -859,7 +857,7 @@ def test_log_line_no_time(caplog):  # N20
     clock = Clock()
     s, _ = stages(Fake(doc("a" * 300), then=lambda: setattr(clock, "now", clock.now + 165)), doc(ARTICLE))
     run(s, doc("k" * 200), clock=clock)
-    assert lines() == ["extract-chain news.example: brightdata=suspect_thin jina=no_time keenable=suspect_thin"]
+    assert lines() == ["sift news.example: brightdata=suspect_thin jina=no_time keenable=suspect_thin"]
 
 
 @pytest.mark.parametrize(
@@ -889,9 +887,9 @@ def test_log_line_never_raises_or_shows_full_url(caplog):  # L1
     asyncio.run(go(123))
     assert out["error"] is None
     assert lines() == [
-        "extract-chain <invalid url>: brightdata=ok keenable=no_key",
-        "extract-chain <no host>: brightdata=ok keenable=no_key",
-        "extract-chain <invalid url>: brightdata=ok keenable=no_key",
+        "sift <invalid url>: brightdata=ok keenable=no_key",
+        "sift <no host>: brightdata=ok keenable=no_key",
+        "sift <invalid url>: brightdata=ok keenable=no_key",
     ]
 
 
@@ -915,10 +913,10 @@ def test_redirect_note_after_paywall_and_fallback_notes():  # N18: order of note
     assert notes(run(s, doc(ARTICLE))) == [NOTE_PAYWALL, NOTE_REDIRECT.format(final=OTHER)]
     s, _ = stages(doc("a" * 300, final_url=OTHER), None, None, None)
     lines = notes(run(s, None))
-    assert lines[0].startswith("[extract-chain] No source passed") and lines[1] == NOTE_REDIRECT.format(final=OTHER)
+    assert lines[0].startswith("[sift] No source passed") and lines[1] == NOTE_REDIRECT.format(final=OTHER)
     s, _ = stages(*(err(name, "API 500") for name in NAMES.values()))
     lines = notes(run(s, doc(ARTICLE, final_url=OTHER)))
-    assert lines[0].startswith("[extract-chain] Copy via Keenable") and lines[1] == NOTE_REDIRECT.format(final=OTHER)
+    assert lines[0].startswith("[sift] Copy via Keenable") and lines[1] == NOTE_REDIRECT.format(final=OTHER)
 
 
 def redirected(requested, final):
@@ -1069,7 +1067,7 @@ def test_fallbacks_are_shaped():  # V16, K8: longest result, bot check, consent 
     assert out["content"].endswith("\n\n" + "x" * 300 + MD_SHAPED) and "No source passed the checks" in notes(out)[0]
     s, _ = stages(doc("Enable JavaScript. " + "a" * 1000 + MD))  # check hint, kept
     out = run(s, None)
-    assert out["content"].endswith("a" * 1000 + MD_SHAPED) and notes(out)[0].startswith("[extract-chain] This looks")
+    assert out["content"].endswith("a" * 1000 + MD_SHAPED) and notes(out)[0].startswith("[sift] This looks")
     s, _ = stages(doc(WALL_TEXT + MD))
     out = run(s, None)
     assert out["content"].endswith("\n\n" + WALL_TEXT + MD_SHAPED) and "Consent wall" in notes(out)[0]
@@ -1106,7 +1104,7 @@ def test_addresses_added_by_the_shaping_do_not_count_as_markers():  # D41: conse
     content = ARTICLE + " Datenschutz Mehr Infos"
     s, _ = stages(doc(content, links=links))
     out = run(s, None)  # the raw text has no marker: taken without a note
-    assert not out["content"].startswith("[extract-chain]")
+    assert not out["content"].startswith("[sift]")
     assert (
         out["content"]
         == ARTICLE + " Datenschutz <https://x.example/consent-a> Mehr Infos <https://x.example/consent-b>"
@@ -1161,7 +1159,7 @@ def test_c5_reference_with_many_links_does_not_trigger_against_jina_plain_text()
     assert chain._length(reference) >= 1.5 * chain._length(jina)  # raw lengths would trigger C5
     s, _ = stages(jina, order=("jina",))
     out = run(s, reference)
-    assert not out["content"].startswith("[extract-chain]") and out["content"].startswith("Title: Some page")
+    assert not out["content"].startswith("[sift]") and out["content"].startswith("Title: Some page")
 
 
 def test_c5_reference_with_image_addresses_does_not_trigger():  # C5, D43

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 – 2026-10-30
+
+The plugin is now called Sift; the repository moved to `Pressimize/hermes-sift` (the old address redirects). No change to the chain, the checks or the returned text apart from the name in the notes and error texts.
+
+**Breaking: rename the plugin in your setup**
+
+- Plugin and provider name `extract-chain` → `sift`: install the directory `sift/` as `plugins/sift/`, delete the old `plugins/extract-chain/`, and set `plugins.enabled` and `web.extract_backend` to `sift`.
+- Setting `EXTRACT_CHAIN_ORDER` → `SIFT_ORDER`. The old name is no longer read.
+- Log lines start with `sift <host>:` instead of `extract-chain <host>:`, error texts with `sift:` and the note for the model with `[sift]` instead of `[extract-chain]`; the display name starts with "Sift" and Keenable gets the title `hermes-sift`.
+
 ## 0.4.0 – 2026-10-26
 
 Compact text for Hermes' cut of 15,000 characters per result, with the link addresses agents follow. From a measurement on 458 pages and three agents' sessions (2026-10-26). No change to the keys, the configuration or the default order.

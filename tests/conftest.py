@@ -61,7 +61,7 @@ def env():
     (the default order leaves Tavily out and starts with Jina, N2); tests may delete or replace entries."""
     ENV.clear()
     ENV.update(KEYS)
-    ENV["EXTRACT_CHAIN_ORDER"] = ALL_STAGES
+    ENV["SIFT_ORDER"] = ALL_STAGES
     yield ENV
     ENV.clear()
 

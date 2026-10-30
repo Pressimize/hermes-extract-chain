@@ -301,7 +301,7 @@ async def keenable(client: httpx.AsyncClient, url: str, key: str, *, deadline: f
             "GET",
             KEENABLE_URL,
             params={"url": url},
-            headers={"Authorization": f"Bearer {key}", "X-Keenable-Title": "hermes-extract-chain"},
+            headers={"Authorization": f"Bearer {key}", "X-Keenable-Title": "hermes-sift"},
         )
         if response.status_code >= 300:
             status = response.status_code

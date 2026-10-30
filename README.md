@@ -6,7 +6,7 @@ Resilient multi-provider web extraction for Hermes Agent.
 
 A [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin that makes `web_extract` fall back across four page-fetch services (**Jina → Bright Data → Firecrawl → Keenable**, Tavily optional), checks each result against a second copy of the page, and tells the model where the text came from.
 
-Hermes uses exactly one extract provider. If it fails on a page (bot protection, a consent wall, a cut-off page), the model gets an error or a bad text. Its only built-in fallback, the keyless rescue, runs when *every* URL of a call fails, and swaps in anonymous providers without saying so. This plugin registers one provider, `extract-chain`, that tries the next service per URL whenever a result fails or looks suspicious. When the result did not come straight from the first service, it adds a short note at the top of the text.
+Hermes uses exactly one extract provider. If it fails on a page (bot protection, a consent wall, a cut-off page), the model gets an error or a bad text. Its only built-in fallback, the keyless rescue, runs when *every* URL of a call fails, and swaps in anonymous providers without saying so. This plugin registers one provider, `sift`, that tries the next service per URL whenever a result fails or looks suspicious. When the result did not come straight from the first service, it adds a short note at the top of the text.
 
 The services and their order come from a web benchmark ([docs/evaluation.md](docs/evaluation.md#decision-v03)); the chain's results on the stored benchmark data are in [docs/validation.md](docs/validation.md).
 
@@ -28,7 +28,7 @@ flowchart LR
 Per URL:
 
 1. **Keenable** is asked for its index copy at once, in parallel. That copy is the reference for the checks, and Keenable is the last stage.
-2. The stages run in order: **Jina Reader** (live), **Bright Data** (live, Web Unlocker), **Firecrawl** (live), **Keenable** (index copy). **Tavily Extract** (copy) runs, between Firecrawl and Keenable, only if `EXTRACT_CHAIN_ORDER` names it. A stage without its key is skipped.
+2. The stages run in order: **Jina Reader** (live), **Bright Data** (live, Web Unlocker), **Firecrawl** (live), **Keenable** (index copy). **Tavily Extract** (copy) runs, between Firecrawl and Keenable, only if `SIFT_ORDER` names it. A stage without its key is skipped.
 3. Each result is classified: an error, an empty page, a bot-check page or a consent wall moves on to the next stage. A paywall ends the chain with a note; no further provider is asked.
 4. A result that looks fine is checked. It is *suspect* if it is very short, a print view, a short page with a JavaScript or bot-check hint, a short page full of consent text, or if Keenable's copy is at least 1.5 times as long. A suspect result is kept, and the next stage is asked.
 5. The first result that passes is returned. If none passes, the longest kept result is returned with a note; otherwise a consent-wall or bot-check page with a note; otherwise one error listing every reason, e.g. `Jina: target HTTP 403; Bright Data: target HTTP 403; Firecrawl: target HTTP 403; Keenable: Gateway timeout`.
@@ -39,7 +39,7 @@ Each provider is asked at most once per URL; URLs of one call run concurrently. 
 Example of what the model sees:
 
 ```text
-[extract-chain] Live fetch via Bright Data (Jina: shorter than the reference copy).
+[sift] Live fetch via Bright Data (Jina: shorter than the reference copy).
 
 # Article title
 …the full report <https://example.com/report> is online…
@@ -54,7 +54,7 @@ Why plain text with addresses: on 458 pages, the full article was within Hermes'
   - [Jina Reader](https://jina.ai/reader/): works without a key at 20 requests per minute; a key raises the limit.
   - [Bright Data](https://brightdata.com) Web Unlocker: an API key and the name of a Web Unlocker zone created in Bright Data's control panel.
   - [Firecrawl](https://firecrawl.dev): scraping API with a browser and proxies.
-  - [Tavily](https://tavily.com): Extract API. Optional: used only if `EXTRACT_CHAIN_ORDER` names it.
+  - [Tavily](https://tavily.com): Extract API. Optional: used only if `SIFT_ORDER` names it.
   - [Keenable](https://keenable.ai): search index that serves stored copies of pages. Without it, the reference check is off.
 - Network access to `r.jina.ai`, `api.brightdata.com`, `api.firecrawl.dev` and `api.keenable.ai` (HTTPS; `HTTPS_PROXY` is honoured), plus `api.tavily.com` if you enable Tavily.
 
@@ -62,17 +62,17 @@ No extra Python packages: the plugin only uses `httpx`, which ships with Hermes.
 
 ## Installation
 
-**Manual (recommended):** copy the directory `extract_chain/` as `plugins/extract-chain/` into your Hermes home.
+**Manual (recommended):** copy the directory `sift/` as `plugins/sift/` into your Hermes home.
 
 | Setup | Target directory |
 |---|---|
-| Linux / macOS | `$HERMES_HOME/plugins/extract-chain/`; the Hermes home is usually `~/.hermes` |
-| Official Docker image | `/opt/data/plugins/extract-chain/` (`/opt/data` is the mounted Hermes home) |
-| Hermes Desktop (Windows), per profile | `%LOCALAPPDATA%\hermes\profiles\<profile>\plugins\extract-chain\` |
+| Linux / macOS | `$HERMES_HOME/plugins/sift/`; the Hermes home is usually `~/.hermes` |
+| Official Docker image | `/opt/data/plugins/sift/` (`/opt/data` is the mounted Hermes home) |
+| Hermes Desktop (Windows), per profile | `%LOCALAPPDATA%\hermes\profiles\<profile>\plugins\sift\` |
 
 ```bash
 git clone https://github.com/Pressimize/hermes-sift.git
-cp -r hermes-sift/extract_chain "${HERMES_HOME:-$HOME/.hermes}/plugins/extract-chain"
+cp -r hermes-sift/sift "${HERMES_HOME:-$HOME/.hermes}/plugins/sift"
 ```
 
 Then enable it in the profile's `config.yaml` (user plugins are opt-in) and select it:
@@ -80,9 +80,9 @@ Then enable it in the profile's `config.yaml` (user plugins are opt-in) and sele
 ```yaml
 plugins:
   enabled:
-    - extract-chain          # add to your existing entries
+    - sift          # add to your existing entries
 web:
-  extract_backend: extract-chain
+  extract_backend: sift
   keyless_rescue: false      # otherwise Hermes silently replaces fully failed calls
   extract_timeout: 180       # Hermes' default is 120; the chain needs up to 170 s per URL
 ```
@@ -97,8 +97,8 @@ BRIGHTDATA_UNLOCKER_ZONE=...   # name of your Web Unlocker zone
 JINA_API_KEY=...               # optional
 FIRECRAWL_API_KEY=...
 KEENABLE_API_KEY=...
-# TAVILY_API_KEY=...           # optional, only used if EXTRACT_CHAIN_ORDER names tavily
-# EXTRACT_CHAIN_ORDER=jina,brightdata,firecrawl,keenable   # optional (this is the default), see Configuration
+# TAVILY_API_KEY=...           # optional, only used if SIFT_ORDER names tavily
+# SIFT_ORDER=jina,brightdata,firecrawl,keenable   # optional (this is the default), see Configuration
 ```
 
 Restart Hermes (or the gateway).
@@ -106,40 +106,40 @@ Restart Hermes (or the gateway).
 **With Hermes' installer:** Hermes can install a plugin from a Git subdirectory and asks for the keys:
 
 ```bash
-hermes plugins install Pressimize/hermes-sift#extract_chain --enable
+hermes plugins install Pressimize/hermes-sift#sift --enable
 ```
 
-It clones only the `extract_chain` subdirectory, asks for the required values (three keys and the zone) and enables the plugin. `JINA_API_KEY`, `TAVILY_API_KEY`, `EXTRACT_CHAIN_ORDER` and the `web:` settings above still go in by hand. Enabling through Hermes' CLI also syncs Hermes' package environment. The plugin needs no packages, but the manual route avoids that step entirely, which can matter in containers built from the official image. The manual route is the one we tested.
+It clones only the `sift` subdirectory, asks for the required values (three keys and the zone) and enables the plugin. `JINA_API_KEY`, `TAVILY_API_KEY`, `SIFT_ORDER` and the `web:` settings above still go in by hand. Enabling through Hermes' CLI also syncs Hermes' package environment. The plugin needs no packages, but the manual route avoids that step entirely, which can matter in containers built from the official image. The manual route is the one we tested.
 
 **Check:** let the agent read a page. `logs/agent.log` in the Hermes home then shows a line per URL:
 
 ```text
-extract-chain www.example.com: jina=ok keenable=ref_ok
+sift www.example.com: jina=ok keenable=ref_ok
 ```
 
 ## Configuration
 
 | Setting | Where | Value |
 |---|---|---|
-| `web.extract_backend` | `config.yaml` | `extract-chain` |
+| `web.extract_backend` | `config.yaml` | `sift` |
 | `web.keyless_rescue` | `config.yaml` | `false` |
 | `web.extract_timeout` | `config.yaml` | `180` |
-| `EXTRACT_CHAIN_ORDER` | `.env` | optional; comma-separated stage names, default `jina,brightdata,firecrawl,keenable` |
+| `SIFT_ORDER` | `.env` | optional; comma-separated stage names, default `jina,brightdata,firecrawl,keenable` |
 
-`EXTRACT_CHAIN_ORDER` accepts exactly `brightdata`, `jina`, `firecrawl`, `tavily` and `keenable` (case and spaces do not matter). A stage left out is not used. Keenable always runs last, wherever it stands and even when it is left out, because its copy is the reference for the checks. Unknown or repeated names are dropped with a warning; if no stage but Keenable is left, the default applies. Tavily is not in the default order; to switch it on, name it: `EXTRACT_CHAIN_ORDER=jina,brightdata,firecrawl,tavily`. Example, Bright Data first: `EXTRACT_CHAIN_ORDER=brightdata,jina,firecrawl`.
+`SIFT_ORDER` accepts exactly `brightdata`, `jina`, `firecrawl`, `tavily` and `keenable` (case and spaces do not matter). A stage left out is not used. Keenable always runs last, wherever it stands and even when it is left out, because its copy is the reference for the checks. Unknown or repeated names are dropped with a warning; if no stage but Keenable is left, the default applies. Tavily is not in the default order; to switch it on, name it: `SIFT_ORDER=jina,brightdata,firecrawl,tavily`. Example, Bright Data first: `SIFT_ORDER=brightdata,jina,firecrawl`.
 
 ## Update and uninstall
 
-- **Update:** replace the `plugins/extract-chain/` directory with the new `extract_chain/` and restart Hermes. After a Git install, use `hermes plugins update extract-chain`. Breaking changes per release, including the upgrade from 0.2: [CHANGELOG.md](CHANGELOG.md).
+- **Update:** replace the `plugins/sift/` directory with the new `sift/` and restart Hermes. After a Git install, use `hermes plugins update sift`. Breaking changes per release, including the upgrade from 0.2: [CHANGELOG.md](CHANGELOG.md).
 - **Uninstall:**
-  1. Delete `plugins/extract-chain/`.
-  2. Remove `extract-chain` from `plugins.enabled`.
+  1. Delete `plugins/sift/`.
+  2. Remove `sift` from `plugins.enabled`.
   3. Set `web.extract_backend` back to your previous provider.
   4. Restart Hermes.
 
 ## Notes the model may see
 
-Every note is one line at the top of the text, starting with `[extract-chain]` (not repeated in the table). Conditions and order: [design.md, section 7](docs/design.md#7-notes-for-the-model).
+Every note is one line at the top of the text, starting with `[sift]` (not repeated in the table). Conditions and order: [design.md, section 7](docs/design.md#7-notes-for-the-model).
 
 | Note | Meaning |
 |---|---|
@@ -157,7 +157,7 @@ Every note is one line at the top of the text, starting with `[extract-chain]` (
 
 ## Privacy
 
-Every URL that passes Hermes' blocklist is sent to **Keenable** (the reference copy) and to the **first stage** of the order, which is **Jina** by default. Depending on the outcome, it also goes to **Bright Data** and **Firecrawl**, and to **Tavily** only if you switched it on. The services see the full URL, query string included. Hermes refuses URLs that contain secrets it recognises before any provider sees them. To keep URLs away from a service, leave it out of `EXTRACT_CHAIN_ORDER` (Keenable: leave out its key).
+Every URL that passes Hermes' blocklist is sent to **Keenable** (the reference copy) and to the **first stage** of the order, which is **Jina** by default. Depending on the outcome, it also goes to **Bright Data** and **Firecrawl**, and to **Tavily** only if you switched it on. The services see the full URL, query string included. Hermes refuses URLs that contain secrets it recognises before any provider sees them. To keep URLs away from a service, leave it out of `SIFT_ORDER` (Keenable: leave out its key).
 
 ## Costs and quotas
 
@@ -166,7 +166,7 @@ Every URL that passes Hermes' blocklist is sent to **Keenable** (the reference c
 | Jina | every URL (default order) | without a key free at 20 requests/min; a new key comes with 10 million tokens | tokens of the returned text; failed requests are not billed |
 | Bright Data | when Jina fails or is suspect | 5,000 requests/month for new accounts, shared with Bright Data's other products, no carry-over | 1 request per URL; only successful requests are billed |
 | Firecrawl | when Jina and Bright Data fail or are suspect | see [evaluation.md](docs/evaluation.md#free-tiers-and-costs-vendor-pages-2026-10-09) | 1 credit per page, also for target 403/404 pages it returns; PDFs 1 credit per page, capped at 30 pages |
-| Tavily | only when enabled in `EXTRACT_CHAIN_ORDER`; then when the earlier stages fail or are suspect | 1,000 credits/month | `extract_depth: advanced`: 2 credits per 5 successful URLs; failures are free |
+| Tavily | only when enabled in `SIFT_ORDER`; then when the earlier stages fail or are suspect | 1,000 credits/month | `extract_depth: advanced`: 2 credits per 5 successful URLs; failures are free |
 | Keenable | every URL (reference copy) | 100,000 requests/month, search and fetch combined | 1 request per URL |
 
 Vendor terms as of 2026-10-18; check the vendors' pages before relying on them.
@@ -192,7 +192,7 @@ The full list: [design.md, section 13](docs/design.md#13-known-limitations). Edg
 ## FAQ
 
 **Can I change the order of the providers?**
-Yes, with `EXTRACT_CHAIN_ORDER` ([Configuration](#configuration)). Keenable stays last, because its copy is the reference for the checks and it reports its own failures worst. Jina first gave the most complete results on the second, harder benchmark set (170 of 197 pages against 160 for Bright Data first; [design.md, D34](docs/design.md#14-decisions)). Tavily changed no result in either set and is optional: name it in `EXTRACT_CHAIN_ORDER` to use it.
+Yes, with `SIFT_ORDER` ([Configuration](#configuration)). Keenable stays last, because its copy is the reference for the checks and it reports its own failures worst. Jina first gave the most complete results on the second, harder benchmark set (170 of 197 pages against 160 for Bright Data first; [design.md, D34](docs/design.md#14-decisions)). Tavily changed no result in either set and is optional: name it in `SIFT_ORDER` to use it.
 
 **Can I add another provider?**
 Not without code. Each stage needs a fetcher that turns the provider's reply into text, a target status and an error code, and the rules were measured with these services.
@@ -219,7 +219,7 @@ uv run pytest
 
 | Path | Content |
 |---|---|
-| `extract_chain/` | The plugin: `provider.py` (Hermes interface, order, budget, pauses), `chain.py` (classification, checks, chain, notes), `fetchers.py` (REST clients), `shape.py` (link addresses and images in the returned text) |
+| `sift/` | The plugin: `provider.py` (Hermes interface, order, budget, pauses), `chain.py` (classification, checks, chain, notes), `fetchers.py` (REST clients), `shape.py` (link addresses and images in the returned text) |
 | `tests/` | Unit tests without network (`httpx.MockTransport`; Hermes is stubbed in `conftest.py`) |
 | `scripts/replay.py` | Maintainer only: replays the chain on stored single-provider results of the web benchmark; needs the raw page texts, which are not published |
 | `scripts/live_check.py` | Calls Hermes' real `web_extract` path in a test profile, without an LLM and with rate limiting |

@@ -7,7 +7,7 @@ import live_check
 import pytest
 import replay
 
-from extract_chain import chain, fetchers
+from sift import chain, fetchers
 
 ARTICLE = "Ein ganz normaler Artikeltext mit mehreren Sätzen. " * 20
 
@@ -115,7 +115,7 @@ def test_replay_names_the_source_stage():  # N23
         "keenable": {"c1": {"id": "c1", "content": ARTICLE}},
     }
     source, result = replay.replay(order, data, "c1")
-    assert source == "jina" and result["content"].startswith("[extract-chain] Live fetch via Jina")
+    assert source == "jina" and result["content"].startswith("[sift] Live fetch via Jina")
     assert chain._result.__name__ == "_result"  # the recording stand-in is removed again
 
 
@@ -128,8 +128,8 @@ def test_live_check_two_urls_of_one_host():  # L1 lines name only the host
     group = [{"id": "a", "url": "https://n.example/1"}, {"id": "b", "url": "https://n.example/2"}]
     results = [{"url": group[0]["url"], "content": "text"}, {"url": group[1]["url"], "content": KEENABLE}]
     lines = [
-        (1.0, "extract-chain n.example: brightdata=ok keenable=ref_ok"),
-        (2.0, "extract-chain n.example: brightdata=api_500 jina=api_500 keenable=ok"),
+        (1.0, "sift n.example: brightdata=ok keenable=ref_ok"),
+        (2.0, "sift n.example: brightdata=api_500 jina=api_500 keenable=ok"),
     ]
     shown, problems = live_check.check_call(group, results, lines)
     assert problems == [] and shown == ["(2 log lines for this host)"] * 2
@@ -141,8 +141,8 @@ def test_live_check_one_url_per_host():
     group = [{"id": "a", "url": "https://n.example/1"}, {"id": "b", "url": "https://m.example/2"}]
     results = [{"url": group[0]["url"], "content": "text"}, {"url": group[1]["url"], "content": "text"}]
     lines = [
-        (1.0, "extract-chain n.example: brightdata=ok keenable=ref_ok"),  # a reference only needs no note
-        (2.0, "extract-chain m.example: brightdata=api_500 keenable=paywall"),
+        (1.0, "sift n.example: brightdata=ok keenable=ref_ok"),  # a reference only needs no note
+        (2.0, "sift m.example: brightdata=api_500 keenable=paywall"),
     ]
     shown, problems = live_check.check_call(group, results, lines)
     assert shown == [lines[0][1], lines[1][1]]
@@ -157,7 +157,7 @@ def test_readme_lists_every_note():  # N17-N19: the README table must follow cha
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
     for name, text in vars(chain).items():
         if name.startswith("NOTE_") and isinstance(text, str):
-            fragments = re.split(r"\{[^}]*\}", text.removeprefix("[extract-chain] "))
+            fragments = re.split(r"\{[^}]*\}", text.removeprefix("[sift] "))
             assert [f.strip() for f in fragments if f.strip() and f.strip() not in readme] == [], name
 
 

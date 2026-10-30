@@ -25,9 +25,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from extract_chain import chain  # noqa: E402
-from extract_chain.chain import Stage, run_chain  # noqa: E402
-from extract_chain.fetchers import is_pdf, jina_doc  # noqa: E402
+from sift import chain  # noqa: E402
+from sift.chain import Stage, run_chain  # noqa: E402
+from sift.fetchers import is_pdf, jina_doc  # noqa: E402
 
 NAMES = {
     "brightdata": "Bright Data",

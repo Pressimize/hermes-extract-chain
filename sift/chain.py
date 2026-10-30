@@ -72,26 +72,21 @@ CHALLENGE = [
     "access denied", "request blocked", "unusual traffic",
 ]  # fmt: skip
 
-NOTE_LIVE = "[extract-chain] Live fetch via {provider} ({reasons})."
-NOTE_COPY = "[extract-chain] Copy via {provider}; it may be older than the live page ({reasons})."
-NOTE_LONGEST = (
-    "[extract-chain] No source passed the checks; this is the longest result ({provider}, {n} characters; {reasons})."
-)
+NOTE_LIVE = "[sift] Live fetch via {provider} ({reasons})."
+NOTE_COPY = "[sift] Copy via {provider}; it may be older than the live page ({reasons})."
+NOTE_LONGEST = "[sift] No source passed the checks; this is the longest result ({provider}, {n} characters; {reasons})."
 NOTE_LONGEST_COPY = (
-    "[extract-chain] No source passed the checks; this is the longest result, a copy that may be older than the live "
+    "[sift] No source passed the checks; this is the longest result, a copy that may be older than the live "
     "page ({provider}, {n} characters; {reasons})."
 )
-NOTE_REDIRECT = "[extract-chain] The site redirected to {final}; the text below is from that page."
+NOTE_REDIRECT = "[sift] The site redirected to {final}; the text below is from that page."
 NOTE_CHECK = (
-    "[extract-chain] This looks like a bot-check page; no other source had the page ({reasons}). "
+    "[sift] This looks like a bot-check page; no other source had the page ({reasons}). "
     "The text below is what the site returned."
 )
-NOTE_PAYWALL = "[extract-chain] Paywall indicators found; the text is probably only the free teaser."
-NOTE_WALL = (
-    "[extract-chain] Consent wall detected; no alternative source found ({reasons}). "
-    "The text below is the consent page."
-)
-NOTE_PDF = "[extract-chain] PDF cut to the first {shown} of {total} pages (Firecrawl page cap)."
+NOTE_PAYWALL = "[sift] Paywall indicators found; the text is probably only the free teaser."
+NOTE_WALL = "[sift] Consent wall detected; no alternative source found ({reasons}). The text below is the consent page."
+NOTE_PDF = "[sift] PDF cut to the first {shown} of {total} pages (Firecrawl page cap)."
 
 # E2: a tag name followed by whitespace, "/" or ">", or a comment or doctype; none holds a "<". So "a < b ... c > d"
 # and "i<n; ... p->next" in an article stay text, and the match stays linear.
@@ -388,8 +383,8 @@ async def run_chain(
             return _result(url, check, NOTE_CHECK.format(reasons="; ".join(reasons)))
         return failure(url, "; ".join(reasons))
     except Exception as exc:  # S6: an unexpected failure only fails this URL, not the whole call
-        log.warning("extract-chain %s: chain failed: %s", _host(url), type(exc).__name__)
-        return failure(url, f"extract-chain: {type(exc).__name__}")
+        log.warning("sift %s: chain failed: %s", _host(url), type(exc).__name__)
+        return failure(url, f"sift: {type(exc).__name__}")
     finally:
         try:  # S6: the log line must never fail the URL or the call
             if not any(s.startswith("keenable=") for s in steps):  # N20: Keenable is always listed
@@ -402,4 +397,4 @@ async def run_chain(
                     steps.append("keenable=pending")
         except Exception:
             steps.append("keenable=exception")
-        log.info("extract-chain %s: %s", _host(url), " ".join(steps))
+        log.info("sift %s: %s", _host(url), " ".join(steps))

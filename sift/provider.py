@@ -19,11 +19,11 @@ from agent.web_search_provider import WebSearchProvider, get_provider_env
 from . import fetchers
 from .chain import MIN_STAGE, URL_BUDGET_MAX, Fetch, Stage, failure, run_chain
 
-NAME = "extract-chain"
+NAME = "sift"
 # N2, D34: Jina first (benchmark set 2: 170 against 160 complete with Bright Data first; several agents share one
 # Jina rate limit, Bright Data then catches its 429s); Tavily only on request (no effect measured).
 DEFAULT_ORDER = ("jina", "brightdata", "firecrawl", "keenable")
-ORDER_ENV = "EXTRACT_CHAIN_ORDER"
+ORDER_ENV = "SIFT_ORDER"
 NAMES = {
     "brightdata": "Bright Data",
     "jina": "Jina",
@@ -52,10 +52,10 @@ except ImportError:  # an incompatible Hermes version: extract() then refuses ev
     check_website_access = None
 # Hermes' keyless rescue leaves entries alone whose error contains "blocked by website policy".
 NO_POLICY = (
-    "Blocked by website policy: extract-chain cannot load Hermes' website blocklist and fetches nothing without it "
+    "Blocked by website policy: sift cannot load Hermes' website blocklist and fetches nothing without it "
     "(the plugin does not match this Hermes version). Update the plugin or set web.extract_backend to another provider."
 )
-NOT_A_URL = "extract-chain: not a URL"  # S6: an entry of urls that is no string
+NOT_A_URL = "sift: not a URL"  # S6: an entry of urls that is no string
 # S8: same convention as Hermes' built-in providers for /stop and new user messages.
 try:
     from tools.interrupt import is_interrupted
@@ -82,14 +82,14 @@ def _env(name: str) -> str:
 
 
 def stage_order(value: str) -> list[str]:
-    """N2: stage ids from EXTRACT_CHAIN_ORDER; unknown names and duplicates are dropped, Keenable goes last."""
+    """N2: stage ids from SIFT_ORDER; unknown names and duplicates are dropped, Keenable goes last."""
     if not value.strip():
         return list(DEFAULT_ORDER)
     names = [part.strip().lower() for part in value.split(",") if part.strip()]
     known = [n for n in dict.fromkeys(names) if n in NAMES and n != "keenable"]
     invalid = len(set(names)) != len(names) or any(n not in NAMES for n in names)  # duplicates, Keenable included
     if invalid or not known:
-        _warn_once("order", "extract-chain: %s has unknown or repeated names; using %s", ORDER_ENV,
+        _warn_once("order", "sift: %s has unknown or repeated names; using %s", ORDER_ENV,
                    ",".join(known + ["keenable"]) if known else ",".join(DEFAULT_ORDER))  # fmt: skip
     return known + ["keenable"] if known else list(DEFAULT_ORDER)
 
@@ -105,7 +105,7 @@ def url_budget() -> float:
     if value <= 0:
         return URL_BUDGET_MAX
     if value < TIMEOUT_LOW:
-        _warn_once("timeout", "extract-chain: web.extract_timeout is %.0f s; 180 s are recommended", value)
+        _warn_once("timeout", "sift: web.extract_timeout is %.0f s; 180 s are recommended", value)
     return max(MIN_STAGE, min(URL_BUDGET_MAX, value - BUDGET_MARGIN))
 
 
@@ -124,7 +124,7 @@ def _blocked(url: str, entry_url: str | None = None) -> dict | None:
     try:
         blocked = check_website_access(url)
     except Exception as exc:  # e.g. ValueError from urlparse on a final URL that cannot be parsed
-        log.warning("extract-chain: website policy check failed for a URL (blocked): %s", type(exc).__name__)
+        log.warning("sift: website policy check failed for a URL (blocked): %s", type(exc).__name__)
         blocked = {"message": f"Blocked by website policy: the check failed for this URL ({type(exc).__name__})"}
     if not blocked:
         return None
@@ -158,7 +158,7 @@ class ExtractChainProvider(WebSearchProvider):
 
     @property
     def display_name(self) -> str:
-        return "Extract chain (Jina, Bright Data, Firecrawl, Keenable)"
+        return "Sift (Jina, Bright Data, Firecrawl, Keenable)"
 
     def is_available(self) -> bool:
         """N3: at least one keyed stage of the order can run (Jina alone does not count; Keenable always runs)."""
@@ -175,7 +175,7 @@ class ExtractChainProvider(WebSearchProvider):
     async def extract(self, urls: list[str], **kwargs: Any) -> list[dict]:
         """One entry per input URL, in input order (S5). kwargs such as ``format`` are ignored (S4)."""
         if check_website_access is None:  # S7: never fetch without the blocklist
-            log.warning("extract-chain: tools.website_policy not importable; every URL refused")
+            log.warning("sift: tools.website_policy not importable; every URL refused")
             return [failure(u, NO_POLICY if isinstance(u, str) else NOT_A_URL) for u in urls]
         unique = list(dict.fromkeys(url for url in urls if isinstance(url, str)))
         done = {url: entry for url in unique if (entry := _blocked(url))}
@@ -186,8 +186,8 @@ class ExtractChainProvider(WebSearchProvider):
             try:
                 done.update(await self._chain(todo))
             except Exception as exc:  # S6: e.g. httpx.AsyncClient rejecting a malformed proxy variable
-                log.warning("extract-chain: call failed: %s", type(exc).__name__)
-                done.update({url: failure(url, f"extract-chain: {type(exc).__name__}") for url in todo})
+                log.warning("sift: call failed: %s", type(exc).__name__)
+                done.update({url: failure(url, f"sift: {type(exc).__name__}") for url in todo})
         # duplicates get entries of their own (S5); an entry that is no string fails alone (S6)
         return [copy.deepcopy(done[u]) if isinstance(u, str) else failure(u, NOT_A_URL) for u in urls]
 
@@ -272,7 +272,7 @@ class ExtractChainProvider(WebSearchProvider):
         """K7, N16: start a pause when the provider's API reports a used-up quota (quota: True). Returns doc."""
         if doc.get("quota") and not self._paused_doc(provider, key):
             self._paused[_slot(provider, key)] = (self._clock() + DAY, doc["error"])
-            log.warning("extract-chain: %s paused for %d s (%s)", provider, DAY, doc["code"])  # L2
+            log.warning("sift: %s paused for %d s (%s)", provider, DAY, doc["code"])  # L2
         return doc
 
 

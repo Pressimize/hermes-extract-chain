@@ -30,7 +30,7 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 
 ### T2 – Replay
 
-**Sets 1 and 2** (stored Jina replies are the old text replies, read as before): default order unchanged in the counts, set 1 116 / 8 / 7 / 1, set 2 171 / 8 / 18 / 0. Page by page against v0.3.2 (stage, notes, error text), only C5 (D43) changes something: on 3 pages Bright Data supplies the result instead of Jina or Keenable, complete before and after. With `EXTRACT_CHAIN_ORDER=brightdata,jina,firecrawl,keenable`, set 2: 161 / 8 / 28 instead of 162 / 8 / 27.
+**Sets 1 and 2** (stored Jina replies are the old text replies, read as before): default order unchanged in the counts, set 1 116 / 8 / 7 / 1, set 2 171 / 8 / 18 / 0. Page by page against v0.3.2 (stage, notes, error text), only C5 (D43) changes something: on 3 pages Bright Data supplies the result instead of Jina or Keenable, complete before and after. With `SIFT_ORDER=brightdata,jina,firecrawl,keenable`, set 2: 161 / 8 / 28 instead of 162 / 8 / 27.
 
 **Set 3** (458 pages with ground truth of 2026-10-26; Jina's JSON replies with link list and Keenable's copies of the same day; no Bright Data or Firecrawl results stored, so the chain is Jina → Keenable). The returned text is graded as the model sees it: after V16, notes included, cut by Hermes to 15,000 or 20,000 characters (75 % head, 25 % tail); the inserted ` <url>` are removed for grading only. Against v0.3.2 with Jina's Markdown of the same day:
 
@@ -52,7 +52,7 @@ Which check ran against which version. What each version changed: [CHANGELOG.md]
 
 ### T2 – Replay
 
-Default order, both sets: every page as in v0.3.1 (set 1 116 / 8 / 7 / 1, set 2 171 / 8 / 18 / 0). The PDF rule (D39) does not show there, because Jina answers first. With `EXTRACT_CHAIN_ORDER=brightdata,jina,firecrawl,keenable`, set 2: 162 complete / 8 partial / 27 wrong instead of 161 / 7 / 29; the three PDF pages now come from Jina instead of as Bright Data's bytes with a paywall note. Set 1 unchanged in that order (no PDF from Bright Data). `bezahlschranke` (E6) and C4 (per word) change no page in either order.
+Default order, both sets: every page as in v0.3.1 (set 1 116 / 8 / 7 / 1, set 2 171 / 8 / 18 / 0). The PDF rule (D39) does not show there, because Jina answers first. With `SIFT_ORDER=brightdata,jina,firecrawl,keenable`, set 2: 162 complete / 8 partial / 27 wrong instead of 161 / 7 / 29; the three PDF pages now come from Jina instead of as Bright Data's bytes with a paywall note. Set 1 unchanged in that order (no PDF from Bright Data). `bezahlschranke` (E6) and C4 (per word) change no page in either order.
 
 ### Probe of Bright Data (2026-10-19)
 
@@ -92,7 +92,7 @@ No page reached the removed rule K9 in either version. The wait limit (D35) and 
 | default: Jina → Bright Data → Firecrawl → Keenable | 2 (197) | **170** | 8 | 19 | 0 |
 | draft default before D34: Bright Data → Jina → Firecrawl → Tavily → Keenable | 1 (132) | 118 | 9 | 5 | 0 |
 | draft default before D34: Bright Data → Jina → Firecrawl → Tavily → Keenable | 2 (197) | 160 | 7 | 30 | 0 |
-| `EXTRACT_CHAIN_ORDER=jina,brightdata,firecrawl,tavily` (Tavily on) | 1 (132) | 117 | 8 | 7 | 0 |
+| `SIFT_ORDER=jina,brightdata,firecrawl,tavily` (Tavily on) | 1 (132) | 117 | 8 | 7 | 0 |
 
 - **T2 accepted** for the default order: 116 and 170 complete, 27 wrong together. The switch from the draft default (Bright Data first) is the decision D34: on the harder set 2, Jina first has 10 more complete and 11 fewer wrong results than Bright Data first (paired sign test, p = 0.04), on set 1 it has 2 fewer complete and 3 more wrong results. Tavily changed no result in either set.
 - **Source of the returned result** (default order): set 1: Jina 97, Bright Data 20, Firecrawl 8, Keenable 7. Set 2: Jina 161, Bright Data 26, Firecrawl 7, Keenable 3. Draft order, set 1: Bright Data 97, Jina 19, Firecrawl 8, Keenable 7, Tavily 1.
@@ -161,7 +161,7 @@ The replay script of v0.1–v0.2 ran `run_chain` on the stored results and compa
 
 3 URLs in a throwaway Hermes Desktop profile (v0.21.6).
 
-- The plugin loaded, and `web.extract_backend: extract-chain` took effect.
+- The plugin loaded, and `web.extract_backend: sift` took effect.
 - All three paths worked: heise `tinyfish=ok`; stern `tinyfish=bot_blocked`, then Firecrawl; golem `tinyfish=wall keenable=ok`.
 - Firecrawl and Keenable accepted Bearer auth.
 - The notes arrived in the tool result.

@@ -12,10 +12,10 @@ import httpx
 import pytest
 import yaml
 
-import extract_chain
-from extract_chain import chain, provider
-from extract_chain.chain import NOTE_COPY, NOTE_LIVE, NOTE_PAYWALL
-from extract_chain.provider import ExtractChainProvider
+import sift
+from sift import chain, provider
+from sift.chain import NOTE_COPY, NOTE_LIVE, NOTE_PAYWALL
+from sift.provider import ExtractChainProvider
 
 ARTICLE = "Ein ganz normaler Artikeltext mit mehreren Sätzen. " * 20
 PAYWALL_TEXT = ARTICLE + "Das war die Leseprobe."
@@ -96,27 +96,27 @@ def failed(url, error):
 
 def chain_lines(caplog):
     caplog.set_level(logging.INFO)
-    return lambda: [r.getMessage() for r in caplog.records if r.name == "extract_chain.chain"]
+    return lambda: [r.getMessage() for r in caplog.records if r.name == "sift.chain"]
 
 
 # --- S1, N1, N4: manifest, version, display name -------------------------------------------------------
 
 
 def manifest():
-    return yaml.safe_load((Path(extract_chain.__file__).parent / "plugin.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load((Path(sift.__file__).parent / "plugin.yaml").read_text(encoding="utf-8"))
 
 
 def test_manifest_and_register():  # S1, N4
     m = manifest()
-    assert m["name"] == "extract-chain" and m["kind"] == "backend"
-    assert m["provides_web_providers"] == ["extract-chain"]
+    assert m["name"] == "sift" and m["kind"] == "backend"
+    assert m["provides_web_providers"] == ["sift"]
     assert [e["name"] for e in m["requires_env"]] == [
         "BRIGHTDATA_API_KEY",
         "BRIGHTDATA_UNLOCKER_ZONE",
         "FIRECRAWL_API_KEY",
         "KEENABLE_API_KEY",
     ]
-    assert [e["name"] for e in m["optional_env"]] == ["TAVILY_API_KEY", "JINA_API_KEY", "EXTRACT_CHAIN_ORDER"]
+    assert [e["name"] for e in m["optional_env"]] == ["TAVILY_API_KEY", "JINA_API_KEY", "SIFT_ORDER"]
     for entry in m["requires_env"] + m["optional_env"]:  # N4: names on _KEY are secrets, the others not
         assert bool(entry.get("secret")) is entry["name"].endswith("_KEY"), entry["name"]
     assert "tinyfish" not in json.dumps(m).lower()  # N1
@@ -127,17 +127,17 @@ def test_manifest_and_register():  # S1, N4
         def register_web_search_provider(self, p):
             registered.append(p)
 
-    extract_chain.register(Ctx())
-    assert len(registered) == 1 and registered[0].name == "extract-chain"
+    sift.register(Ctx())
+    assert len(registered) == 1 and registered[0].name == "sift"
 
 
 def test_version_is_the_same_in_both_files():  # N21, P1
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    assert manifest()["version"] == project["version"] == "0.4.0"
+    assert manifest()["version"] == project["version"] == "0.5.0"
 
 
 def test_display_name_names_the_chain():  # N1
-    assert ExtractChainProvider().display_name == "Extract chain (Jina, Bright Data, Firecrawl, Keenable)"
+    assert ExtractChainProvider().display_name == "Sift (Jina, Bright Data, Firecrawl, Keenable)"
 
 
 # --- S2, N3: availability ----------------------------------------------------------------------------------
@@ -145,7 +145,7 @@ def test_display_name_names_the_chain():  # N1
 
 def test_capabilities(env):  # S2
     p = ExtractChainProvider()
-    assert (p.name, p.supports_search(), p.supports_extract()) == ("extract-chain", False, True)
+    assert (p.name, p.supports_search(), p.supports_extract()) == ("sift", False, True)
 
 
 @pytest.mark.parametrize(
@@ -157,8 +157,8 @@ def test_capabilities(env):  # S2
         ({"JINA_API_KEY": "jn-SECRET"}, False),  # N3: Jina alone does not count
         ({"FIRECRAWL_API_KEY": "fc-SECRET"}, True),
         ({"TAVILY_API_KEY": "tv-SECRET"}, False),  # N2: Tavily is not in the default order
-        ({"TAVILY_API_KEY": "tv-SECRET", "EXTRACT_CHAIN_ORDER": "jina,tavily"}, True),
-        ({"FIRECRAWL_API_KEY": "fc-SECRET", "EXTRACT_CHAIN_ORDER": "jina,tavily"}, False),  # left out of the order
+        ({"TAVILY_API_KEY": "tv-SECRET", "SIFT_ORDER": "jina,tavily"}, True),
+        ({"FIRECRAWL_API_KEY": "fc-SECRET", "SIFT_ORDER": "jina,tavily"}, False),  # left out of the order
         ({"KEENABLE_API_KEY": "ke-SECRET"}, True),
         ({}, False),
     ],
@@ -208,7 +208,7 @@ def test_stage_order(value, order, caplog):  # N2
 def test_invalid_stage_order_warns(value, order, caplog):  # N2
     assert provider.stage_order(value) == order
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
-    assert "EXTRACT_CHAIN_ORDER" in caplog.records[0].getMessage()
+    assert "SIFT_ORDER" in caplog.records[0].getMessage()
 
 
 def test_order_warning_once_per_process(caplog):  # N2
@@ -218,7 +218,7 @@ def test_order_warning_once_per_process(caplog):  # N2
 
 
 def test_order_from_the_environment(env):  # N2
-    env["EXTRACT_CHAIN_ORDER"] = "firecrawl,jina"
+    env["SIFT_ORDER"] = "firecrawl,jina"
     api = Api(firecrawl=down, jina=jina_ok())
     out = extract(api, [URL])
     assert api.asked() == ["firecrawl", "jina"]
@@ -245,17 +245,13 @@ def test_url_budget_below_180_warns_once(web_config, caplog):  # Z1, L3
     web_config["config"] = {"extract_timeout": 100}
     assert provider.url_budget() == 90.0
     provider.url_budget()
-    assert [r.getMessage() for r in caplog.records] == [
-        "extract-chain: web.extract_timeout is 100 s; 180 s are recommended"
-    ]
+    assert [r.getMessage() for r in caplog.records] == ["sift: web.extract_timeout is 100 s; 180 s are recommended"]
 
 
 def test_url_budget_default_setting(web_config, caplog):  # N9: Hermes' default of 120 s, which warns (L3)
     web_config["config"] = {}
     assert provider.url_budget() == 110.0
-    assert [r.getMessage() for r in caplog.records] == [
-        "extract-chain: web.extract_timeout is 120 s; 180 s are recommended"
-    ]
+    assert [r.getMessage() for r in caplog.records] == ["sift: web.extract_timeout is 120 s; 180 s are recommended"]
 
 
 @pytest.mark.parametrize("config", [RuntimeError("broken yaml"), {"extract_timeout": "abc"}, None])
@@ -282,9 +278,7 @@ def test_budget_and_clock_reach_the_chain(env, web_config, caplog):  # N9: monot
     p = ExtractChainProvider(httpx.MockTransport(api), monotonic=lambda: now[0])
     asyncio.run(p.extract([URL]))
     assert api.asked() == ["brightdata"]
-    assert lines() == [
-        "extract-chain a.example: brightdata=api_500 jina=no_time firecrawl=no_time tavily=no_time keenable=ok"
-    ]
+    assert lines() == ["sift a.example: brightdata=api_500 jina=no_time firecrawl=no_time tavily=no_time keenable=ok"]
 
 
 # --- S3, N3: keys and stages -------------------------------------------------------------------------------
@@ -337,7 +331,7 @@ def test_brightdata_without_key_or_zone_is_skipped(env, caplog, missing, reason)
     out = extract(api, [URL])
     assert api.asked() == ["jina"]
     assert out[0]["content"].startswith(NOTE_LIVE.format(provider="Jina", reasons=reason))
-    assert lines() == ["extract-chain a.example: brightdata=no_key jina=ok keenable=ref_http_500"]
+    assert lines() == ["sift a.example: brightdata=no_key jina=ok keenable=ref_http_500"]
 
 
 def test_missing_keys_skip_stages(env, caplog):  # N3, L1
@@ -351,9 +345,7 @@ def test_missing_keys_skip_stages(env, caplog):  # N3, L1
         "Bright Data: API 500: down; Jina: API 500: down; Firecrawl: no API key; Tavily: no API key; "
         "Keenable: no API key"
     )
-    assert lines() == [
-        "extract-chain a.example: brightdata=api_500 jina=api_500 firecrawl=no_key tavily=no_key keenable=no_key"
-    ]
+    assert lines() == ["sift a.example: brightdata=api_500 jina=api_500 firecrawl=no_key tavily=no_key keenable=no_key"]
 
 
 def test_keys_never_leak(env, caplog):  # S3
@@ -399,7 +391,7 @@ def test_entries_that_are_no_strings_fail_alone(env):  # S6
     urls = [123, {"x": 1}, URL, None]
     out = extract(api, urls)
     assert [r["url"] for r in out] == urls
-    assert [r["error"] for r in out] == ["extract-chain: not a URL"] * 2 + [None, "extract-chain: not a URL"]
+    assert [r["error"] for r in out] == ["sift: not a URL"] * 2 + [None, "sift: not a URL"]
 
 
 def test_urls_run_concurrently(env):  # N10, K6
@@ -444,8 +436,8 @@ def test_unexpected_failure_becomes_error_entries(env, monkeypatch, caplog):  # 
 
     monkeypatch.setattr(provider.httpx, "AsyncClient", broken_client)
     urls = ["https://a.example/", "https://b.example/"]
-    assert extract(Api(), urls) == [failed(u, "extract-chain: ValueError") for u in urls]
-    assert caplog.messages == ["extract-chain: call failed: ValueError"]
+    assert extract(Api(), urls) == [failed(u, "sift: ValueError") for u in urls]
+    assert caplog.messages == ["sift: call failed: ValueError"]
 
 
 def test_unexpected_failure_in_one_chain_spares_the_other_urls(env, monkeypatch, caplog):  # S6
@@ -460,9 +452,9 @@ def test_unexpected_failure_in_one_chain_spares_the_other_urls(env, monkeypatch,
     urls = ["https://a.example/", "https://b.example/"]
     api = Api(brightdata=lambda r: bd_ok("BOOM" if "a.example" in r.content.decode() else ARTICLE)(r), keenable=ke_ok())
     out = extract(api, urls)
-    assert out[0] == failed(urls[0], "extract-chain: KeyError")
+    assert out[0] == failed(urls[0], "sift: KeyError")
     assert out[1]["error"] is None and out[1]["content"] == ARTICLE
-    assert "extract-chain a.example: chain failed: KeyError" in caplog.messages
+    assert "sift a.example: chain failed: KeyError" in caplog.messages
 
 
 # --- N5 the Keenable task -----------------------------------------------------------------------------------
@@ -538,7 +530,7 @@ def test_keenable_task_is_cancelled_on_an_unexpected_failure(env, monkeypatch): 
     state = {}
     api = Api(brightdata=after_a_moment(bd_ok("BOOM")), keenable=slow_keenable(state))
     out, running = run_with_tasks(api, [URL])
-    assert out[0]["error"] == "extract-chain: KeyError"
+    assert out[0]["error"] == "sift: KeyError"
     assert state.get("cancelled") and running == []
 
 
@@ -562,7 +554,7 @@ def test_interrupt_between_stages_skips_the_live_stages(env, monkeypatch, caplog
     out = extract(api, [URL])
     assert api.asked() == ["brightdata"]
     assert out[0]["error"] == "Bright Data: API 500: HTTP 500; Jina: interrupted; Keenable: interrupted"
-    assert lines() == ["extract-chain a.example: brightdata=api_500 jina=interrupted keenable=interrupted"]
+    assert lines() == ["sift a.example: brightdata=api_500 jina=interrupted keenable=interrupted"]
 
 
 def test_interrupt_takes_a_keenable_copy_that_has_arrived(env, monkeypatch, caplog):  # S8
@@ -575,7 +567,7 @@ def test_interrupt_takes_a_keenable_copy_that_has_arrived(env, monkeypatch, capl
     api = Api(brightdata=after_a_moment(brightdata_then_interrupt), keenable=ke_ok())  # Keenable answers first
     out = extract(api, [URL])
     assert out[0]["error"] is None and out[0]["content"].endswith("\n\n" + ARTICLE)
-    assert lines() == ["extract-chain a.example: brightdata=api_500 jina=interrupted keenable=ok"]
+    assert lines() == ["sift a.example: brightdata=api_500 jina=interrupted keenable=ok"]
 
 
 def test_interrupt_ends_the_wait_for_keenable(env, monkeypatch):  # S8, K3: the wait checks the flag
@@ -646,7 +638,7 @@ def test_quota_pauses_the_stage_for_24_hours(env, caplog):  # N16, K7, L2
 
     out, asked = call()
     assert "tavily" in asked
-    assert "extract-chain: Tavily paused for 86400 s (api_432)" in caplog.messages
+    assert "sift: Tavily paused for 86400 s (api_432)" in caplog.messages
 
     clock.now += 3600
     out, asked = call()
@@ -745,7 +737,7 @@ def test_stage_deadline_is_capped(env, web_config, monkeypatch, timeout, brightd
         return {"error": "Bright Data: API 500", "code": "api_500"}
 
     monkeypatch.setattr(provider.fetchers, "brightdata", brightdata_spy)
-    env["EXTRACT_CHAIN_ORDER"] = "brightdata,firecrawl"
+    env["SIFT_ORDER"] = "brightdata,firecrawl"
     api = Api(firecrawl=lambda r: httpx.Response(500), keenable=down)
     extract(api, [URL])
     assert got["brightdata"] == pytest.approx(brightdata, abs=0.5)  # min(90 s, budget)
@@ -781,9 +773,7 @@ def test_several_quota_replies_in_one_call_start_one_pause(env, caplog):  # L2: 
     api = Api(firecrawl=credits_gone_for_all, keenable=ke_ok())
     asyncio.run(ExtractChainProvider(httpx.MockTransport(api), clock=Clock(NOON)).extract(urls))
     assert len(started) == 3
-    assert [m for m in caplog.messages if "paused for" in m] == [
-        "extract-chain: Firecrawl paused for 86400 s (api_402)"
-    ]
+    assert [m for m in caplog.messages if "paused for" in m] == ["sift: Firecrawl paused for 86400 s (api_402)"]
 
 
 # --- S7 website policy ---------------------------------------------------------------------------------------
@@ -861,7 +851,7 @@ def test_policy_check_error_blocks(env, monkeypatch, caplog, fails_for):  # S7
     assert out[0]["url"] == URL and out[0]["content"] == ""
     assert out[0]["error"] == "Blocked by website policy: the check failed for this URL (ValueError)"
     assert bool(api.requests) is (fails_for != "a.example")  # an input URL is not even fetched
-    assert "extract-chain: website policy check failed for a URL (blocked): ValueError" in caplog.messages
+    assert "sift: website policy check failed for a URL (blocked): ValueError" in caplog.messages
 
 
 def test_missing_policy_module_refuses_every_url(env, monkeypatch, caplog):  # S7, D15
@@ -871,8 +861,8 @@ def test_missing_policy_module_refuses_every_url(env, monkeypatch, caplog):  # S
     out = extract(api, urls)
     assert api.requests == [] and [r["url"] for r in out] == urls
     assert all("blocked by website policy" in r["error"].lower() and r["content"] == "" for r in out)
-    assert "extract-chain: tools.website_policy not importable; every URL refused" in caplog.messages
-    assert extract(api, [5])[0]["error"] == "extract-chain: not a URL"
+    assert "sift: tools.website_policy not importable; every URL refused" in caplog.messages
+    assert extract(api, [5])[0]["error"] == "sift: not a URL"
     assert ExtractChainProvider().is_available()
 
 
@@ -906,7 +896,7 @@ def test_url_budget_has_a_floor(web_config):  # N9: never below one stage's mini
 
 
 def test_default_order_without_setting(env):  # N2, D34: Jina, Bright Data, Firecrawl, Keenable; no Tavily
-    del env["EXTRACT_CHAIN_ORDER"]
+    del env["SIFT_ORDER"]
     api = Api()  # every service fails
     out = extract(api, [URL])
     assert api.asked() == ["jina", "brightdata", "firecrawl"] and api.keenable() == 1
@@ -928,6 +918,6 @@ def test_jina_request_and_shaped_result_end_to_end(
 
 def test_markdown_provider_result_is_shaped_end_to_end(env):  # V16b, S4
     api = Api(brightdata=bd_ok(ARTICLE + " [Jetzt bewerben](https://a.example/job) ![x](p.png)"), jina=down)
-    env["EXTRACT_CHAIN_ORDER"] = "brightdata,jina"
+    env["SIFT_ORDER"] = "brightdata,jina"
     out = extract(api, [URL])
     assert "Jetzt bewerben <https://a.example/job>" in out[0]["content"] and "![x]" not in out[0]["content"]

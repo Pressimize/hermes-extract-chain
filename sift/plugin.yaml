@@ -1,13 +1,13 @@
-name: extract-chain
-version: 0.4.0
+name: sift
+version: 0.5.0
 description: "web_extract fallback chain: Jina -> Bright Data -> Firecrawl (live) -> Keenable (index copy), Tavily optional; checks each result against Keenable's copy, with notes for the model"
 author: "Pressimize and Claude (Anthropic)"
 license: MIT
-homepage: "https://github.com/Pressimize/hermes-extract-chain"
+homepage: "https://github.com/Pressimize/hermes-sift"
 kind: backend
 requires_hermes: ">=0.21"
 provides_web_providers:
-  - extract-chain
+  - sift
 requires_env:
   - name: BRIGHTDATA_API_KEY
     description: "Bright Data API key (Web Unlocker; stage skipped if unset)"
@@ -22,10 +22,10 @@ requires_env:
     secret: true
 optional_env:
   - name: TAVILY_API_KEY
-    description: "Tavily API key (only used when EXTRACT_CHAIN_ORDER names tavily)"
+    description: "Tavily API key (only used when SIFT_ORDER names tavily)"
     secret: true
   - name: JINA_API_KEY
     description: "Jina Reader API key (optional; without it Jina allows 20 requests per minute)"
     secret: true
-  - name: EXTRACT_CHAIN_ORDER
+  - name: SIFT_ORDER
     description: "Stage order, comma-separated (default jina,brightdata,firecrawl,keenable; tavily optional); Keenable always last"
